@@ -1,0 +1,23 @@
+# --- 第三方参考仓库（各自已有 upstream，不入库）---
+/cybergym-e2e/
+/oss-fuzz-vulns/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+build/
+dist/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# --- Claude / 本地状态 ---
+.claude/
