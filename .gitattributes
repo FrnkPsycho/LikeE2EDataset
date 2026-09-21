@@ -1,2 +1,6 @@
 # 触发载荷 poc.bin 等是「原始字节」交付物，禁止行尾转换（保持参赛者提交的精确字节）
 *.bin binary
+
+# 镜像 tar / 源码包 tar 是二进制，禁止行尾转换
+*.tar binary
+*.tar.gz binary
