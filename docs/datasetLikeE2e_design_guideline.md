@@ -912,3 +912,67 @@ S3 白盒结果 + S4 GT exploit 复测 + S7 黑盒结果
 核心思想可以概括为：
 
 > **同一个漏洞，两条防御路径，一套统一评价体系。**
+
+---
+
+## 15. 通用运行拓扑模板与 Case 复用边界
+
+> 本节把「运行环境」从单题实现提升为**跨题复用的 benchmark 骨架**：网络拓扑、评测接口、判据流程是固定不变的；每道题只需替换「业务系统」（`target` + `frontend` 的具体实现、攻击链、判据类型）与 `case.yaml`。已在样例 CVE-2025-24928 上真 docker 端到端跑通验证（`organizer/evaluator/docker_env.py`，final_score=1.0）。
+
+### 15.1 通用网络拓扑模板（核心骨架，8 服务 / 3 网络）
+
+```text
+client_net (10.30.0.0/24)                         protected_net (10.40.0.0/24)
+ ┌─────────────────────────────┐                 ┌─────────────────────┐
+ │ red_team        10.30.0.10 ─┤                 │                     │
+ │ red_team_gt     10.30.0.11 ─┤──▶ gateway ──▶ waf ──▶ frontend ──▶ target
+ │ normal_business 10.30.0.20 ─┤    (nginx:80)  (:8080) (:80 跳板)    (内网漏洞服务)
+ └─────────────────────────────┘                                    崩溃型→ASAN / flag型→官方镜像
+management_net (10.50.0.0/24)
+   blue_controller (:9000) ◀── 读 app.log(S5检测) / 写 blacklist+WAF(S6处置) ──▶ waf 执行拦截
+   ▲
+   │ 127.0.0.1:9000 带外 (/detect /contain /reset)
+   评测器（宿主机进程，切 TARGET_IMAGE vul/fixed/patched）
+```
+
+服务定位与网络归属：
+
+| 服务 | 网络 | 定位 |
+|---|---|---|
+| `security_gateway` | client_net | client_net 唯一入口，nginx 反代 |
+| `waf` | client_net | 内联代理，读 `blacklist.json`/`waf_rules.json`，S6/S4 拦截执行点 |
+| `frontend` | client_net ∩ protected_net | 跳板 = 横向移动载体（**可选层**） |
+| `target` | protected_net | 内网漏洞服务（主漏洞载体） |
+| `blue_controller` | client_net ∩ management_net | 蓝队 S5 检测 / S6 处置，带外受控 API |
+| `red_team` / `red_team_gt` / `normal_business` | client_net | 攻击 / 真值变种 / 正常业务流量源（`profiles`，按需 `run`） |
+| 评测器 | 宿主机 | 带外判分 + 环境重置 + `TARGET_IMAGE` 切换 |
+
+### 15.2 复用边界：固定骨架 / 逐题替换 / 可选扩展
+
+| 层 | 内容 | 跨题是否变 |
+|---|---|---|
+| ① 固定骨架 | 3 网 CIDR、gateway、waf、blue_controller、red_team/gt/normal_business、宿主机评测器、`Environment` 8 方法接口、S1–S7/S4 判据与门控、提交契约（`poc.bin`/`fix.patch`/`block.policy`） | 不变 |
+| ② 逐题替换 | `target` 漏洞服务、`frontend` 业务应用、攻击链、判据类型、`case.yaml`、镜像选型 | 每道题换 |
+| ③ 可选扩展 | `frontend` 跳板（横向移动层）、附加服务（DB / 缓存 / 内网主机） | 按需增减 |
+
+- **横向移动是可选层**：有 `frontend` 跳板 → 3 网（完整版，如 CVE-2025-24928）；无跳板 → 2 网，`red_team → gateway → waf → target` 直连（如 flag 型 CVE-2021-41773）。
+
+### 15.3 判据类型决定镜像选型（跨题复用决策规则）
+
+| 判据类型 | 典型 CVE | 镜像选型 | 原因 |
+|---|---|---|---|
+| 崩溃型（内存安全） | CVE-2025-24928 | ASAN 自建（builder 编译 / runtime 剥离干净二进制） | 官方二进制无 sanitizer，检不出栈溢出 |
+| flag 型（配置/逻辑） | CVE-2021-41773 | 黑盒用官方二进制镜像、白盒从上游源码 tarball 自建 | 配置/逻辑漏洞官方二进制即可触发 |
+
+### 15.4 题目模板目录结构（新建 Case 的复制/替换清单）
+
+以 `samples/CVE-2025-24928/organizer/` 为模板。新增一题时：
+
+**直接复用（不改或仅微调）**：
+`evaluator/evaluate.py`（S1–S7 判据）、`evaluator/docker_env.py`（真 docker 探测）、`defense/blue_server.py`、`defense/waf.py`、`security_gateway/nginx.conf`、`package_challenge.sh`、`docker-compose.yml`（拓扑）。
+
+**逐题替换**：
+`case.yaml`、`frontend/*`（业务应用）、`service/*`（target 镜像构建）、`traffic/*`（攻击链 + 正常业务）、`ground_truth/*`（reference_patch / 漏洞代码 / GT 变种）、`source/*`（脱敏源码包）、`defense/blue_controller.py`（答案版特征/规则）、`business_tests/*`、`environment/config.toml`。
+
+**待参数化（当前散落的逐题常量，应收敛到 `case.yaml`）**：
+`case_id`、判据类型（`judgment`）、`BUILDER_IMAGE`、`patch_build.py` 的构建配方、`local_harness.py`/`grade_submission.py` 的 mock 特征。对齐 TODO §3「`case.yaml` / `_deliver/` 副本与新流程同步」。
