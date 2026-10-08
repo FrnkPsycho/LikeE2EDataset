@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""host_run.py — 宿主侧驱动（通用，独立于赛题）：生成 task.json → 跑 agent 容器 → 收产物。
+
+这是「agent 标准接口落地」的宿主侧：把 agent 容器跑起来、让它现场产出 /submission/ 下的
+交付物。判分走各赛题 organizer/evaluator/docker_env.py（真编译+重放），本模块只负责
+「跑 agent、收产物」，不判分。一套环境用于所有赛题，赛题差异只来自 --case-dir。
+
+配置两文件（谁维护什么）：
+  team.env —— 被测方维护一个：模型端点 / agent 选择 / 队伍身份（MODEL_* / AGENT / CUSTOM_ENTRYPOINT / TEAM_ID）
+  case.env —— 赛题维护一个：网络拓扑 + agent 网络策略（网络名 / EGRESS_PROXY / NO_PROXY）
+本模块读这两个文件，不再硬编码任何网络名；黑盒攻击者 join 的网由 case.env 决定。
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import envfile
+import gen_task
+
+AGENT_DIR = os.path.dirname(os.path.abspath(__file__))       # datasetLikeE2e/agent/
+DATASET_DIR = os.path.dirname(AGENT_DIR)                     # datasetLikeE2e/
+IMAGE = "datasetlikee2e/agent:v1"
+DEFAULT_CASE = os.path.join(DATASET_DIR, "samples", "CVE-2025-24928")
+DEFAULT_TEAM_ENV = os.path.join(DATASET_DIR, "team.env")
+
+
+def _run(cmd, **kw):
+    print("+", " ".join(cmd))
+    return subprocess.run(cmd, **kw)
+
+
+def run_agent(case_dir, mode, role, agent=None, custom_entrypoint=None,
+              submission_dir=None, log_file=None, image=IMAGE, timeout=1800,
+              build=False, team_env_path=None, case_env_path=None) -> int:
+    """跑一个 agent 容器产出交付物，返回退出码（0=正常，非 0=该阶段记 0 分）。"""
+    case = os.path.abspath(case_dir)
+    spec_path = os.path.join(case, "organizer", "agent_task.json")
+    if not os.path.exists(spec_path):
+        raise SystemExit(f"缺赛题任务规格：{spec_path}")
+
+    # —— 配置：team.env（被测方）+ case.env（赛题拓扑）——
+    team_env = envfile.parse(team_env_path or DEFAULT_TEAM_ENV)
+    case_env = envfile.parse(case_env_path or os.path.join(case, "organizer", "case.env"))
+
+    agent = agent or team_env.get("AGENT") or "codex"
+    submission_dir = os.path.abspath(submission_dir or os.path.join(case, "submission"))
+    os.makedirs(submission_dir, exist_ok=True)
+
+    # 模型端点：team.env MODEL_* → 容器 OPENAI_*（宿主机 OPENAI_* 兜底，兼容旧用法）
+    model = {
+        "OPENAI_BASE_URL": team_env.get("MODEL_BASE_URL") or os.environ.get("OPENAI_BASE_URL"),
+        "OPENAI_API_KEY": team_env.get("MODEL_API_KEY") or os.environ.get("OPENAI_API_KEY"),
+        "OPENAI_MODEL": team_env.get("MODEL_NAME") or os.environ.get("OPENAI_MODEL"),
+    }
+
+    # 网络：由 case.env 决定（不再硬编码 organizer_client_net）
+    agent_net = case_env.get("AGENT_NETWORK")
+    egress_proxy = case_env.get("EGRESS_PROXY")
+    no_proxy = case_env.get("NO_PROXY")
+    networks = [agent_net] if agent_net else []
+    if (mode, role) == ("blackbox", "attacker"):
+        biz_net = case_env.get("BLACKBOX_ATTACKER_NETWORK") or case_env.get("CLIENT_NETWORK")
+        if biz_net:
+            networks.append(biz_net)
+
+    # 1. 生成 task.json（临时文件，供挂载）
+    task = gen_task.build(gen_task.load_spec(spec_path), mode, role, timeout)
+    tmp = tempfile.mkdtemp(prefix="agent_task_")
+    task_path = os.path.join(tmp, "task.json")
+    with open(task_path, "w", encoding="utf-8") as f:
+        json.dump(task, f, ensure_ascii=False, indent=2)
+
+    # 2. 选 entrypoint：预置（codex/qwencode）或做题方自研（custom）
+    if agent == "custom":
+        ep = custom_entrypoint or os.path.join(AGENT_DIR, "entrypoint.codex.sh")
+    else:
+        ep = os.path.join(AGENT_DIR, f"entrypoint.{agent}.sh")
+
+    # 3. 构建镜像（context = agent/，Dockerfile 的 COPY 相对此目录）
+    if build:
+        r = _run(["docker", "build", "-t", image,
+                  "-f", os.path.join(AGENT_DIR, "Dockerfile"), AGENT_DIR])
+        if r.returncode != 0:
+            raise SystemExit("agent 镜像构建失败")
+
+    # 4. 组装 docker run
+    cmd = ["docker", "run", "--rm",
+           "-v", f"{ep}:/challenge/agent/entrypoint.sh:ro",
+           "-v", f"{task_path}:/challenge/task.json:ro",
+           "-v", f"{submission_dir}:/submission"]
+    if mode == "whitebox":
+        cmd += ["-v", f"{os.path.join(case, 'organizer', 'source')}:/challenge/source:ro"]
+    if role == "defender" and log_file:
+        cmd += ["-v", f"{os.path.abspath(log_file)}:/challenge/logs/app.log:ro"]
+
+    for k, v in model.items():
+        if v:
+            cmd += ["-e", f"{k}={v}"]
+
+    # 出网管控：agent 只能经 egress 代理访问模型；内网目标直连（NO_PROXY）
+    if egress_proxy:
+        for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+            cmd += ["-e", f"{k}={egress_proxy}"]
+    if no_proxy:
+        for k in ("NO_PROXY", "no_proxy"):
+            cmd += ["-e", f"{k}={no_proxy}"]
+
+    for n in networks:
+        cmd += ["--network", n]
+
+    cmd += [image,
+            "--mode", mode, "--role", role,
+            "--task", "/challenge/task.json", "--output", "/submission/",
+            "--timeout", str(timeout)]
+
+    r = _run(cmd)
+    print(f"\n[host_run] {mode}/{role} agent 退出码 = {r.returncode}（0=正常，非 0=该阶段记 0）")
+    for root, _, files in os.walk(submission_dir):
+        for fn in files:
+            print("  -", os.path.join(root, fn))
+    return r.returncode
+
+
+def main():
+    ap = argparse.ArgumentParser(description="跑一个 agent 容器产出交付物（通用）")
+    ap.add_argument("--case-dir", default=DEFAULT_CASE,
+                    help="赛题目录（含 organizer/agent_task.json 与 organizer/source）")
+    ap.add_argument("--mode", required=True, choices=["whitebox", "blackbox"])
+    ap.add_argument("--role", required=True, choices=["attacker", "defender"])
+    ap.add_argument("--agent", default=None, choices=["codex", "qwencode", "custom"],
+                    help="agent 类型（缺省读 team.env 的 AGENT）")
+    ap.add_argument("--custom-entrypoint", default=None)
+    ap.add_argument("--submission-dir", default=None, help="缺省 = <case-dir>/submission")
+    ap.add_argument("--log-file", default=None, help="黑盒防御者：宿主上的应用日志路径")
+    ap.add_argument("--image", default=IMAGE)
+    ap.add_argument("--timeout", type=int, default=1800)
+    ap.add_argument("--build", action="store_true", help="先 docker build agent 镜像")
+    ap.add_argument("--team-env", default=None, help="被测方 team.env（缺省 datasetLikeE2e/team.env）")
+    ap.add_argument("--case-env", default=None, help="赛题 case.env（缺省 <case>/organizer/case.env）")
+    a = ap.parse_args()
+
+    rc = run_agent(a.case_dir, a.mode, a.role, agent=a.agent,
+                   custom_entrypoint=a.custom_entrypoint,
+                   submission_dir=a.submission_dir, log_file=a.log_file,
+                   image=a.image, timeout=a.timeout, build=a.build,
+                   team_env_path=a.team_env, case_env_path=a.case_env)
+    sys.exit(rc)
+
+
+if __name__ == "__main__":
+    main()

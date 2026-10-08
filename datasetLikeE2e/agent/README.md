@@ -1,0 +1,108 @@
+# agent 标准接口（datasetLikeE2e/agent）
+
+> **通用基础设施，独立于赛题。** 一套 agent+model 环境用于所有赛题；赛题只提供一份
+> `organizer/agent_task.json`（逐题替换的任务内容）+ 源码/日志挂载。评测对象 = **完整
+> agent**（harness + 模型），不是单模型。
+
+## 1. 两种参赛方式
+
+| | 方式 | 做题方提供什么 | 测什么 |
+|---|---|---|---|
+| **Option 1** | 预置 agent + 自接模型 | 只有模型（端点/key） | 用开源 harness 接自己模型的能力 |
+| **Option 2** | 自研 agent + 自接模型 | 完整 harness + 模型 | 完整 agent 工程能力 |
+
+- Option 1：镜像已预置 **Codex CLI**（`codex exec`）和 **Qwen Code**（`qwen -p`），
+  做题方只注入 `OPENAI_*` 环境变量接自己的模型即可。
+- Option 2：做题方把自研 harness 挂到 `/challenge/agent/entrypoint.sh`，覆盖预置入口。
+
+## 2. 标准接口（固定，不可改）
+
+宿主这样拉起 agent 容器（容器内 `run_agent.sh` 是组织方固定启动器）：
+
+```
+docker run --rm <agent镜像> run_agent.sh \
+    --mode whitebox|blackbox --role attacker|defender \
+    --task /challenge/task.json --output /submission/ --timeout 1800
+```
+
+`run_agent.sh` 校验并调用 `/challenge/agent/entrypoint.sh`（做题方交付的 harness 入口），
+用 `timeout` 兜底，透传退出码：**0 = 该阶段正常完成，非 0 = 该阶段记 0 分**。
+
+### 模型访问（环境变量，OpenAI 兼容）
+
+| 变量 | 含义 |
+|---|---|
+| `OPENAI_BASE_URL` | 模型端点，如 `https://api.deepseek.com/v1` |
+| `OPENAI_API_KEY` | 模型密钥 |
+| `OPENAI_MODEL` | 模型名，如 `deepseek-chat` |
+
+- Qwen Code 直接读这三个变量（也兼容 `ANTHROPIC_*` / `GEMINI_*`）。
+- Codex 由 `entrypoint.codex.sh` 生成 `~/.codex/config.toml`（`wire_api="responses"`）。
+  **注意**：Codex 当前要求 Responses 协议；若端点只提供 chat completions，请用 Qwen Code。
+
+## 3. 逐题替换：agent_task.json
+
+每道赛题在 `organizer/agent_task.json` 提供角色任务内容（`roles` 下按
+`whitebox_attacker` / `blackbox_attacker` / `blackbox_defender` 命名），`gen_task.py`
+据此生成 task.json。字段：
+
+| mode/role | 输入字段 | 产出文件 |
+|---|---|---|
+| whitebox / attacker | `src_dir` + 漏洞描述 | `whitebox/poc.bin` + `whitebox/patch.diff` |
+| blackbox / attacker | `vuln_info`（不含 CVE 编号）+ `target_url` | `blackbox/poc.bin` |
+| blackbox / defender | `log_file` | `blackbox/block.policy` |
+
+## 4. 文件清单（全通用，无赛题内容）
+
+| 文件 | 谁提供 | 作用 |
+|---|---|---|
+| `Dockerfile` | 组织方 | 预置 codex + qwen-code 的 agent 镜像 |
+| `run_agent.sh` | 组织方（固定） | 标准接口容器侧启动器 |
+| `entrypoint.codex.sh` / `entrypoint.qwencode.sh` | 组织方（参考） | option 1 的预置 harness 入口 |
+| `prompt.py` | 组织方 | task.json → 任务指令 |
+| `gen_task.py` | 组织方 | 读赛题 agent_task.json → task.json |
+| `host_run.py` | 组织方 | 宿主侧驱动（跑 agent + 收产物） |
+| `/challenge/agent/entrypoint.sh` | **做题方** | 真正的 harness 入口（option 1 用参考入口，option 2 自研） |
+
+## 5. 跑一次（示例：白盒攻击者 + Codex）
+
+```bash
+export OPENAI_BASE_URL=https://api.deepseek.com/v1 OPENAI_API_KEY=sk-... OPENAI_MODEL=deepseek-chat
+docker compose -f datasetLikeE2e/samples/CVE-2025-24928/organizer/docker-compose.yml up -d
+python datasetLikeE2e/agent/host_run.py \
+    --case-dir datasetLikeE2e/samples/CVE-2025-24928 \
+    --mode whitebox --role attacker --agent codex --build
+```
+
+## 6. 与判分管线的衔接
+
+`host_run.py` 只「跑 agent 收产物」，判分走各赛题 `organizer/evaluator/docker_env.py`。
+当前 agent 尚未接入 docker_env.py 的自动化闭环（下一步），白盒 S1-W→S2 是第一个全链路验证点。
+
+> 产物命名对齐既有代码：白盒修复产物用 **`patch.diff`**（`patch_build.py` 实际读取），
+> 不是 TODO §5-① 里写的 `fix.patch`（该处口径待同步）。
+
+## 7. 配置两文件：team.env（被测方）+ case.env（赛题）
+
+agent 环境读两个 `.env`，不再硬编码任何网络名/端点：
+
+| 文件 | 谁维护 | 内容 |
+|---|---|---|
+| `datasetLikeE2e/team.env` | **被测方**（一份） | 模型 `MODEL_BASE_URL`/`MODEL_API_KEY`/`MODEL_NAME`、agent 选择 `AGENT`（`codex`\|`qwencode`\|`custom`）+ `CUSTOM_ENTRYPOINT`、队伍 `TEAM_ID` |
+| `<case>/organizer/case.env` | **赛题**（一份） | 网络拓扑 `COMPOSE_PROJECT` + 三网名、`AGENT_NETWORK`/`EGRESS_PROXY`/`NO_PROXY`、黑盒攻击者 join 的 `BLACKBOX_ATTACKER_NETWORK` |
+
+模板见 `datasetLikeE2e/team.env.example`（复制为 `team.env` 填真实值；`MODEL_API_KEY` 是机密，
+建议不进版本库）。`team.env` 缺失时回落到宿主机 `OPENAI_*` 环境变量（旧用法仍可用）。
+
+### 出网管控（禁止联网搜索）
+
+agent 容器**无直连外网**：它只 join `agent_net`（internal，无公网路由），模型访问经
+`egress_proxy`（squid）出网，白名单 = `MODEL_BASE_URL` 的 host，其余全拒（`gen_squid.py`
+在 compose up 前自动生成 `organizer/egress/squid.conf`）。黑盒攻击者额外 join
+`case.env` 的 `BLACKBOX_ATTACKER_NETWORK`（client_net，已 `internal` 关闭外网），经
+`NO_PROXY` 直连网关 `security_gateway`。
+
+> 两个待验证点：(1) `client_net: internal: true` 后 blue_controller/gateway 的 127.0.0.1
+> 端口仍经 docker-proxy 可达（Docker Desktop 默认开启 userland-proxy，预期没问题）；
+> (2) codex/qwen-code 是否认 `HTTPS_PROXY`——若不认，模型调用会失败，需在 agent 镜像里装
+> `global-agent` 或设 `NODE_USE_ENV_PROXY=1`，或改透明代理。

@@ -24,3 +24,9 @@ Thumbs.db
 
 # --- 赛题离线交付产物（镜像 tar 大文件，不入库）---
 _deliver/
+
+# --- 被测方机密（真实密钥不入库；模板 team.env.example 入库）---
+team.env
+
+# --- git rebase 自动备份 ---
+.rebase-backup-*/

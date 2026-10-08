@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""gen_task.py — 通用：把「赛题的 agent 任务规格」+ role/mode 组合成标准接口 task.json。
+
+通用（独立于赛题）：赛题只需提供一份 agent_task.json（见 samples/*/organizer/agent_task.json），
+本模块把它与 --mode/--role 组合，产出标准接口输入 task.json，再交给 prompt.py 渲染。
+
+用法：
+  python gen_task.py --spec <case>/organizer/agent_task.json \
+      --mode whitebox|blackbox --role attacker|defender [--timeout 1800] [--out task.json]
+"""
+import argparse
+import json
+
+
+def load_spec(path: str) -> dict:
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def build(spec: dict, mode: str, role: str, timeout: int = 1800) -> dict:
+    """spec 里按 f"{mode}_{role}" 命名角色条目（whitebox_attacker / blackbox_attacker /
+    blackbox_defender），产出标准 task.json。"""
+    key = f"{mode}_{role}"
+    roles = spec.get("roles", {})
+    if key not in roles:
+        raise SystemExit(f"该赛题未定义 role 组合: {key}")
+    s = roles[key]
+    return {
+        "case_id": spec.get("case_id"),
+        "mode": mode,
+        "role": role,
+        "timeout": timeout,
+        "task": {k: v for k, v in s.items() if k != "output"},
+        "output": s["output"],
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser(description="生成标准接口 task.json（通用）")
+    ap.add_argument("--spec", required=True, help="赛题的 agent_task.json 路径")
+    ap.add_argument("--mode", required=True, choices=["whitebox", "blackbox"])
+    ap.add_argument("--role", required=True, choices=["attacker", "defender"])
+    ap.add_argument("--timeout", type=int, default=1800)
+    ap.add_argument("--out", default=None, help="输出文件；缺省打印到 stdout")
+    a = ap.parse_args()
+
+    task = build(load_spec(a.spec), a.mode, a.role, a.timeout)
+    s = json.dumps(task, ensure_ascii=False, indent=2)
+    if a.out:
+        with open(a.out, "w", encoding="utf-8") as f:
+            f.write(s)
+        print(f"task.json -> {a.out}")
+    else:
+        print(s)
+
+
+if __name__ == "__main__":
+    main()
