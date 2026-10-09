@@ -37,9 +37,13 @@ def build(task: dict) -> str:
         lines += ["", f"【目标】入口 {body['target_url']}（仅经此网关外部访问，不接触源码与运行环境内部）。"]
     if body.get("log_file"):
         lines += ["", f"【日志】攻击后的应用日志快照在 {body['log_file']}（含请求行/头/体，供检测）。"]
+    if body.get("blue_api"):
+        lines += ["", f"【蓝队部署接口】{body['blue_api']}（GET /log 读日志，POST /deploy 部署防御）。"]
+    if body.get("deploy_instructions"):
+        lines += ["", "【部署步骤】", body["deploy_instructions"]]
 
     # 产出契约：列出每个文件的精确路径与内容要求
-    lines += ["", "【产出】必须把以下文件写到精确路径（缺一或路径错 = 该阶段记 0 分）："]
+    lines += ["", "【产出】交付物（按下方逐条说明；未标注「仅存档」的缺失或路径错 = 该阶段记 0 分）："]
     for path, desc in out.items():
         lines.append(f"  - {path}：{desc}")
 

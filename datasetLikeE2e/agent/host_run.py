@@ -62,11 +62,16 @@ def run_agent(case_dir, mode, role, agent=None, custom_entrypoint=None,
     agent_net = case_env.get("AGENT_NETWORK")
     egress_proxy = case_env.get("EGRESS_PROXY")
     no_proxy = case_env.get("NO_PROXY")
+    blue_api = case_env.get("BLUE_API")
     networks = [agent_net] if agent_net else []
     if (mode, role) == ("blackbox", "attacker"):
         biz_net = case_env.get("BLACKBOX_ATTACKER_NETWORK") or case_env.get("CLIENT_NETWORK")
         if biz_net:
             networks.append(biz_net)
+    elif (mode, role) == ("blackbox", "defender"):
+        mgmt_net = case_env.get("BLACKBOX_DEFENDER_NETWORK") or case_env.get("MANAGEMENT_NETWORK")
+        if mgmt_net:
+            networks.append(mgmt_net)
 
     # 1. 生成 task.json（临时文件，供挂载）
     task = gen_task.build(gen_task.load_spec(spec_path), mode, role, timeout)
@@ -101,6 +106,10 @@ def run_agent(case_dir, mode, role, agent=None, custom_entrypoint=None,
     for k, v in model.items():
         if v:
             cmd += ["-e", f"{k}={v}"]
+
+    # 蓝队部署接口（黑盒防御者读日志 + 部署防御用；由 case.env 提供）
+    if blue_api:
+        cmd += ["-e", f"BLUE_API={blue_api}"]
 
     # 出网管控：agent 只能经 egress 代理访问模型；内网目标直连（NO_PROXY）
     if egress_proxy:
