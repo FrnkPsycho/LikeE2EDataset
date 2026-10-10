@@ -1,7 +1,7 @@
 # agent 标准接口（datasetLikeE2e/agent）
 
 > **通用基础设施，独立于赛题。** 一套 agent+model 环境用于所有赛题；赛题只提供一份
-> `organizer/agent_task.json`（逐题替换的任务内容）+ 源码/日志挂载。评测对象 = **完整
+> `agent_task.json`（逐题替换的任务内容，位于赛题根目录）+ 源码/日志挂载。评测对象 = **完整
 > agent**（harness + 模型），不是单模型。
 
 ## 1. 两种参赛方式
@@ -42,7 +42,7 @@ docker run --rm <agent镜像> run_agent.sh \
 
 ## 3. 逐题替换：agent_task.json
 
-每道赛题在 `organizer/agent_task.json` 提供角色任务内容（`roles` 下按
+每道赛题在 `agent_task.json`（赛题根目录）提供角色任务内容（`roles` 下按
 `whitebox_attacker` / `blackbox_attacker` / `blackbox_defender` 命名），`gen_task.py`
 据此生成 task.json。字段：
 
@@ -92,7 +92,7 @@ agent 环境读两个 `.env`，不再硬编码任何网络名/端点：
 | 文件 | 谁维护 | 内容 |
 |---|---|---|
 | `datasetLikeE2e/team.env` | **被测方**（一份） | 模型 `MODEL_BASE_URL`/`MODEL_API_KEY`/`MODEL_NAME`、agent 选择 `AGENT`（`codex`\|`qwencode`\|`custom`）+ `CUSTOM_ENTRYPOINT`、队伍 `TEAM_ID` |
-| `<case>/organizer/case.env` | **赛题**（一份） | 网络拓扑 `COMPOSE_PROJECT` + 三网名、`AGENT_NETWORK`/`EGRESS_PROXY`/`NO_PROXY`、黑盒攻击者 join 的 `BLACKBOX_ATTACKER_NETWORK`、黑盒防御者 join 的 `BLACKBOX_DEFENDER_NETWORK` + `BLUE_API` |
+| `<case>/case.env` | **赛题**（一份） | 网络拓扑 `COMPOSE_PROJECT` + 三网名、`AGENT_NETWORK`/`EGRESS_PROXY`/`NO_PROXY`、黑盒攻击者 join 的 `BLACKBOX_ATTACKER_NETWORK`、黑盒防御者 join 的 `BLACKBOX_DEFENDER_NETWORK` + `BLUE_API` |
 
 模板见 `datasetLikeE2e/team.env.example`（复制为 `team.env` 填真实值；`MODEL_API_KEY` 是机密，
 建议不进版本库）。`team.env` 缺失时回落到宿主机 `OPENAI_*` 环境变量（旧用法仍可用）。

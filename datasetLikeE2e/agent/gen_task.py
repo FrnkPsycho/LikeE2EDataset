@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 """gen_task.py — 通用：把「赛题的 agent 任务规格」+ role/mode 组合成标准接口 task.json。
 
-通用（独立于赛题）：赛题只需提供一份 agent_task.json（见 samples/*/organizer/agent_task.json），
+通用（独立于赛题）：赛题只需提供一份 agent_task.json（见 samples/*/agent_task.json，位于赛题根目录），
 本模块把它与 --mode/--role 组合，产出标准接口输入 task.json，再交给 prompt.py 渲染。
 
 用法：
-  python gen_task.py --spec <case>/organizer/agent_task.json \
+  python gen_task.py --spec <case>/agent_task.json \
       --mode whitebox|blackbox --role attacker|defender [--timeout 1800] [--out task.json]
 """
 import argparse

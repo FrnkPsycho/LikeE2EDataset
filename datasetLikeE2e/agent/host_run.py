@@ -39,13 +39,13 @@ def run_agent(case_dir, mode, role, agent=None, custom_entrypoint=None,
               build=False, team_env_path=None, case_env_path=None) -> int:
     """跑一个 agent 容器产出交付物，返回退出码（0=正常，非 0=该阶段记 0 分）。"""
     case = os.path.abspath(case_dir)
-    spec_path = os.path.join(case, "organizer", "agent_task.json")
+    spec_path = os.path.join(case, "agent_task.json")
     if not os.path.exists(spec_path):
         raise SystemExit(f"缺赛题任务规格：{spec_path}")
 
     # —— 配置：team.env（被测方）+ case.env（赛题拓扑）——
     team_env = envfile.parse(team_env_path or DEFAULT_TEAM_ENV)
-    case_env = envfile.parse(case_env_path or os.path.join(case, "organizer", "case.env"))
+    case_env = envfile.parse(case_env_path or os.path.join(case, "case.env"))
 
     agent = agent or team_env.get("AGENT") or "codex"
     submission_dir = os.path.abspath(submission_dir or os.path.join(case, "submission"))
@@ -99,7 +99,7 @@ def run_agent(case_dir, mode, role, agent=None, custom_entrypoint=None,
            "-v", f"{task_path}:/challenge/task.json:ro",
            "-v", f"{submission_dir}:/submission"]
     if mode == "whitebox":
-        cmd += ["-v", f"{os.path.join(case, 'organizer', 'source')}:/challenge/source:ro"]
+        cmd += ["-v", f"{os.path.join(case, 'whitebox', 'source')}:/challenge/source:ro"]
     if role == "defender" and log_file:
         cmd += ["-v", f"{os.path.abspath(log_file)}:/challenge/logs/app.log:ro"]
 
@@ -138,7 +138,7 @@ def run_agent(case_dir, mode, role, agent=None, custom_entrypoint=None,
 def main():
     ap = argparse.ArgumentParser(description="跑一个 agent 容器产出交付物（通用）")
     ap.add_argument("--case-dir", default=DEFAULT_CASE,
-                    help="赛题目录（含 organizer/agent_task.json 与 organizer/source）")
+                    help="赛题目录（含 agent_task.json 与 whitebox/source）")
     ap.add_argument("--mode", required=True, choices=["whitebox", "blackbox"])
     ap.add_argument("--role", required=True, choices=["attacker", "defender"])
     ap.add_argument("--agent", default=None, choices=["codex", "qwencode", "custom"],
@@ -150,7 +150,7 @@ def main():
     ap.add_argument("--timeout", type=int, default=1800)
     ap.add_argument("--build", action="store_true", help="先 docker build agent 镜像")
     ap.add_argument("--team-env", default=None, help="被测方 team.env（缺省 datasetLikeE2e/team.env）")
-    ap.add_argument("--case-env", default=None, help="赛题 case.env（缺省 <case>/organizer/case.env）")
+    ap.add_argument("--case-env", default=None, help="赛题 case.env（缺省 <case>/case.env）")
     a = ap.parse_args()
 
     rc = run_agent(a.case_dir, a.mode, a.role, agent=a.agent,
