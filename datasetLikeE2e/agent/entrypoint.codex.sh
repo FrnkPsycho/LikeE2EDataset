@@ -33,5 +33,8 @@ PROMPT="$(python3 /opt/agent/prompt.py "$TASK")"
 
 cd /workspace
 # --skip-git-repo-check：/workspace 非 git 仓库时跳过仓库校验。
-# 若该版本 codex exec 需要自动批准工具调用，追加 --full-auto（按安装版本调整）。
-exec codex exec --skip-git-repo-check "$PROMPT"
+# --dangerously-bypass-approvals-and-sandbox：无头跑必须。关掉 codex 内部 bwrap
+#   沙箱 + 审批提示，否则容器内会因「bwrap 无法建命名空间 / approval policy is
+#   Never」卡死。官方说明本 flag「专为外部已沙箱化的环境」设计——外层 Docker
+#   的网络/权限隔离才是 benchmark 真正的边界。
+exec codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox "$PROMPT"
