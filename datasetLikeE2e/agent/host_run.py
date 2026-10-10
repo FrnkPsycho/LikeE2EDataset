@@ -93,11 +93,13 @@ def run_agent(case_dir, mode, role, agent=None, custom_entrypoint=None,
         if r.returncode != 0:
             raise SystemExit("agent 镜像构建失败")
 
-    # 4. 组装 docker run
-    cmd = ["docker", "run", "--rm",
+    # 4. 组装 docker run（每个 agent 独立容器，输出留在容器内 /submission/，
+    #    跑完后宿主 docker cp 回 submission/，不共享挂载 → agent 之间互看不到产物）
+    import uuid
+    container = f"agent-{mode}-{role}-{uuid.uuid4().hex[:8]}"
+    cmd = ["docker", "run", "--name", container,
            "-v", f"{ep}:/challenge/agent/entrypoint.sh:ro",
-           "-v", f"{task_path}:/challenge/task.json:ro",
-           "-v", f"{submission_dir}:/submission"]
+           "-v", f"{task_path}:/challenge/task.json:ro"]
     if mode == "whitebox":
         cmd += ["-v", f"{os.path.join(case, 'whitebox', 'source')}:/challenge/source:ro"]
     if role == "defender" and log_file:
@@ -128,6 +130,14 @@ def run_agent(case_dir, mode, role, agent=None, custom_entrypoint=None,
             "--timeout", str(timeout)]
 
     r = _run(cmd)
+
+    # 5. 把容器内产出 copy 回宿主 submission/（容器无共享挂载，产物留在容器层）
+    os.makedirs(submission_dir, exist_ok=True)
+    cp = _run(["docker", "cp", f"{container}:/submission/.", submission_dir])
+    _run(["docker", "rm", "-f", container])
+    if cp.returncode != 0:
+        print(f"[host_run] 警告：docker cp 失败，agent 可能未产出 /submission/（退出码 {r.returncode}）")
+
     print(f"\n[host_run] {mode}/{role} agent 退出码 = {r.returncode}（0=正常，非 0=该阶段记 0）")
     for root, _, files in os.walk(submission_dir):
         for fn in files:
