@@ -64,7 +64,9 @@ def run_agent(case_dir, mode, role, agent=None, custom_entrypoint=None,
     no_proxy = case_env.get("NO_PROXY")
     blue_api = case_env.get("BLUE_API")
     networks = [agent_net] if agent_net else []
-    if (mode, role) == ("blackbox", "attacker"):
+    if role == "attacker":
+        # 白盒/黑盒攻击者都 join 业务网：白盒也要能打到目标做「复现验证 + 失败重试」
+        # （任务语义 = 复现，agent 应迭代到真正触发，而不是盲投一次就交）
         biz_net = case_env.get("BLACKBOX_ATTACKER_NETWORK") or case_env.get("CLIENT_NETWORK")
         if biz_net:
             networks.append(biz_net)
