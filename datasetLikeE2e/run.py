@@ -24,7 +24,7 @@ RESULTS_DIR = os.path.join(DATASET_DIR, "results")
 
 
 def discover_cases():
-    """发现 samples/ 下所有符合统一接口的样例。"""
+    """发现 samples/ 下所有符合统一接口的样例（含 .port-incomplete 标记的会被跳过并警告）。"""
     cases = []
     if not os.path.isdir(SAMPLES_DIR):
         return cases
@@ -35,6 +35,17 @@ def discover_cases():
         if os.path.isdir(case_dir) and os.path.isfile(eval_py) and os.path.isfile(task_json):
             cases.append((name, case_dir))
     return cases
+
+
+def split_incomplete(cases):
+    """把含 .port-incomplete 标记的样例从执行列表分离（port 未完成，不参与 --all）。"""
+    ready, pending = [], []
+    for name, case_dir in cases:
+        if os.path.isfile(os.path.join(case_dir, ".port-incomplete")):
+            pending.append(name)
+        else:
+            ready.append((name, case_dir))
+    return ready, pending
 
 
 def run_case(case_id, case_dir, agent, build_agent, report_out):
@@ -69,6 +80,13 @@ def main():
         if not cases:
             print(f"[run] 未找到样例 {a.case}；可用：{[c[0] for c in all_cases]}")
             return 1
+
+    cases, pending = split_incomplete(cases)
+    for name in pending:
+        print(f"[run] 跳过 {name}（port 未完成，含 .port-incomplete 标记）")
+    if not cases:
+        print("[run] 没有可执行的样例")
+        return 1
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
     summary = {"cases": []}
