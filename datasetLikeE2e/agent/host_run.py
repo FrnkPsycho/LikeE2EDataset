@@ -100,6 +100,10 @@ def run_agent(case_dir, mode, role, agent=None, custom_entrypoint=None,
     cmd = ["docker", "run", "--name", container,
            "-v", f"{ep}:/challenge/agent/entrypoint.sh:ro",
            "-v", f"{task_path}:/challenge/task.json:ro"]
+    # prompt.py 也从宿主机挂载（覆盖镜像内副本）：改提示词无需重建 agent 镜像
+    prompt_py = os.path.join(AGENT_DIR, "prompt.py")
+    if os.path.isfile(prompt_py):
+        cmd += ["-v", f"{prompt_py}:/opt/agent/prompt.py:ro"]
     if mode == "whitebox":
         cmd += ["-v", f"{os.path.join(case, 'whitebox', 'source')}:/challenge/source:ro"]
     if role == "defender" and log_file:
@@ -134,9 +138,12 @@ def run_agent(case_dir, mode, role, agent=None, custom_entrypoint=None,
     # 5. 把容器内产出 copy 回宿主 submission/（容器无共享挂载，产物留在容器层）
     os.makedirs(submission_dir, exist_ok=True)
     cp = _run(["docker", "cp", f"{container}:/submission/.", submission_dir])
-    _run(["docker", "rm", "-f", container])
     if cp.returncode != 0:
-        print(f"[host_run] 警告：docker cp 失败，agent 可能未产出 /submission/（退出码 {r.returncode}）")
+        # cp 失败（如 WSL2 宿主挂载抖动）：保留容器不删，产物可人工 docker cp 抢救
+        print(f"[host_run] 警告：docker cp 失败，容器 {container} 已保留（可手动 docker cp 抢救产物）。"
+              f"agent 退出码 {r.returncode}")
+    else:
+        _run(["docker", "rm", "-f", container])
 
     print(f"\n[host_run] {mode}/{role} agent 退出码 = {r.returncode}（0=正常，非 0=该阶段记 0）")
     for root, _, files in os.walk(submission_dir):
