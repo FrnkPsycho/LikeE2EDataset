@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""run.py — 顶层 runner：一键跑全部样例（或单个样例）
+
+统一 case 接口：每个样例目录 samples/<CASE_ID>/ 必须包含
+  - agent_task.json                      三角色任务
+  - case.env                             拓扑
+  - organizer/evaluator/docker_env.py    评测器入口
+
+用法：
+  python run.py --all                    # 跑 samples/ 下所有样例
+  python run.py --case CVE-2025-24928    # 跑单个样例
+  python run.py --all --agent codex --build-agent
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+DATASET_DIR = os.path.dirname(os.path.abspath(__file__))
+SAMPLES_DIR = os.path.join(DATASET_DIR, "samples")
+RESULTS_DIR = os.path.join(DATASET_DIR, "results")
+
+
+def discover_cases():
+    """发现 samples/ 下所有符合统一接口的样例。"""
+    cases = []
+    if not os.path.isdir(SAMPLES_DIR):
+        return cases
+    for name in sorted(os.listdir(SAMPLES_DIR)):
+        case_dir = os.path.join(SAMPLES_DIR, name)
+        eval_py = os.path.join(case_dir, "organizer", "evaluator", "docker_env.py")
+        task_json = os.path.join(case_dir, "agent_task.json")
+        if os.path.isdir(case_dir) and os.path.isfile(eval_py) and os.path.isfile(task_json):
+            cases.append((name, case_dir))
+    return cases
+
+
+def run_case(case_id, case_dir, agent, build_agent, report_out):
+    """跑单个样例：调它自己的 docker_env.py --run-agent，报告落盘 report_out。"""
+    eval_py = os.path.join(case_dir, "organizer", "evaluator", "docker_env.py")
+    cmd = [sys.executable, "-u", eval_py, "--run-agent", "--report-out", report_out]
+    if agent:
+        cmd += ["--agent", agent]
+    if build_agent:
+        cmd += ["--build-agent"]
+    print(f"\n{'=' * 64}\n[run] 样例 {case_id}\n{'=' * 64}", flush=True)
+    r = subprocess.run(cmd, cwd=case_dir)
+    return r.returncode
+
+
+def main():
+    ap = argparse.ArgumentParser(description="datasetLikeE2e 顶层 runner")
+    ap.add_argument("--case", default=None, help="只跑指定样例（缺省跑全部）")
+    ap.add_argument("--all", action="store_true", help="跑 samples/ 下所有样例")
+    ap.add_argument("--agent", default=None, choices=["codex", "qwencode", "custom"])
+    ap.add_argument("--build-agent", action="store_true")
+    a = ap.parse_args()
+
+    all_cases = discover_cases()
+    if not all_cases:
+        print("[run] 未发现样例（samples/ 下没有含 organizer/evaluator/docker_env.py 的目录）")
+        return 1
+
+    cases = all_cases
+    if a.case:
+        cases = [c for c in all_cases if c[0] == a.case]
+        if not cases:
+            print(f"[run] 未找到样例 {a.case}；可用：{[c[0] for c in all_cases]}")
+            return 1
+
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    summary = {"cases": []}
+    for case_id, case_dir in cases:
+        report_out = os.path.join(RESULTS_DIR, f"{case_id}.json")
+        rc = run_case(case_id, case_dir, a.agent, a.build_agent, report_out)
+        entry = {"case_id": case_id, "exit_code": rc}
+        if os.path.isfile(report_out):
+            try:
+                with open(report_out, encoding="utf-8") as f:
+                    report = json.load(f)
+                entry["final_score"] = report.get("final_score")
+                entry["whitebox_score"] = (report.get("whitebox") or {}).get("whitebox_score")
+                entry["blackbox_score"] = (report.get("blackbox") or {}).get("blackbox_score")
+            except Exception as e:
+                entry["report_error"] = str(e)
+        summary["cases"].append(entry)
+
+    print(f"\n{'=' * 64}\n[run] 汇总\n{'=' * 64}")
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    summary_out = os.path.join(RESULTS_DIR, "summary.json")
+    with open(summary_out, "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+    print(f"[run] 汇总已写入 {summary_out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
