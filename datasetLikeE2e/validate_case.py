@@ -14,7 +14,7 @@
 
 用法：
   python validate_case.py <case_dir>           # 校验单个赛题
-  python validate_case.py --all                # 校验 samples/ 下全部（跳过 _ 开头）
+  python validate_case.py --all                # 校验 cases/ 下全部（跳过 _ 开头）
 退出码：0 = 全部通过；1 = 有 FAIL。
 """
 import argparse
@@ -24,7 +24,7 @@ import os
 import sys
 
 DATASET_DIR = os.path.dirname(os.path.abspath(__file__))
-SAMPLES_DIR = os.path.join(DATASET_DIR, "samples")
+CASES_DIR = os.path.join(DATASET_DIR, "cases")
 
 REQUIRED_ROLES = ("whitebox_attacker", "blackbox_attacker", "blackbox_defender")
 REQUIRED_METHODS = ("run_attack", "run_reference_attack", "apply_patch",
@@ -170,7 +170,7 @@ def validate_case(case_dir):
     return errs, warns
 
 
-def discover(directory=SAMPLES_DIR):
+def discover(directory=CASES_DIR):
     out = []
     if not os.path.isdir(directory):
         return out
@@ -186,7 +186,7 @@ def discover(directory=SAMPLES_DIR):
 def main():
     ap = argparse.ArgumentParser(description="校验赛题目录是否符合 Case Schema")
     ap.add_argument("case_dir", nargs="?", default=None, help="赛题目录路径")
-    ap.add_argument("--all", action="store_true", help="校验 samples/ 下全部赛题")
+    ap.add_argument("--all", action="store_true", help="校验 cases/ 下全部赛题")
     a = ap.parse_args()
 
     targets = []

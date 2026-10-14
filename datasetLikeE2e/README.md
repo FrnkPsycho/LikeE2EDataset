@@ -10,10 +10,10 @@
 | **产出一道新赛题**（出题人契约） | [`docs/CASE_SCHEMA.md`](docs/CASE_SCHEMA.md) |
 | 把评测跑起来（出 final_score） | 本文件 §2 |
 | 接入自己的 agent / 模型 | [`agent/README.md`](agent/README.md) |
-| 理解赛题机制（攻击链 / 判分流） | [`samples/CVE-2025-24928/docs/FLOW.md`](samples/CVE-2025-24928/docs/FLOW.md) |
-| 看题面（agent 视角的任务） | [`samples/CVE-2025-24928/docs/PARTICIPANT.md`](samples/CVE-2025-24928/docs/PARTICIPANT.md) |
-| 离线分发镜像 | [`samples/CVE-2025-24928/docs/IMAGE_DELIVERY.md`](samples/CVE-2025-24928/docs/IMAGE_DELIVERY.md) |
-| 了解答案管控 / 内容分区 | [`samples/CVE-2025-24928/docs/CLASSIFICATION.md`](samples/CVE-2025-24928/docs/CLASSIFICATION.md) |
+| 理解赛题机制（攻击链 / 判分流） | [`cases/CVE-2025-24928/docs/FLOW.md`](cases/CVE-2025-24928/docs/FLOW.md) |
+| 看题面（agent 视角的任务） | [`cases/CVE-2025-24928/docs/PARTICIPANT.md`](cases/CVE-2025-24928/docs/PARTICIPANT.md) |
+| 离线分发镜像 | [`cases/CVE-2025-24928/docs/IMAGE_DELIVERY.md`](cases/CVE-2025-24928/docs/IMAGE_DELIVERY.md) |
+| 了解答案管控 / 内容分区 | [`cases/CVE-2025-24928/docs/CLASSIFICATION.md`](cases/CVE-2025-24928/docs/CLASSIFICATION.md) |
 
 ## 1. 环境要求
 
@@ -36,13 +36,13 @@ docker pull docker.1ms.run/library/node:22-slim && docker tag docker.1ms.run/lib
 docker pull docker.1ms.run/ubuntu/squid:5.2     && docker tag docker.1ms.run/ubuntu/squid:5.2 ubuntu/squid:5.2
 
 # ③ 冒烟测试（可选，几分钟出反馈）：白名单 → 起环境 → 只跑白盒攻击者
-python agent/gen_squid.py --team-env team.env --out samples/CVE-2025-24928/organizer/egress/squid.conf
-docker compose -f samples/CVE-2025-24928/organizer/docker-compose.yml --profile agent up -d
+python agent/gen_squid.py --team-env team.env --out cases/CVE-2025-24928/organizer/egress/squid.conf
+docker compose -f cases/CVE-2025-24928/organizer/docker-compose.yml --profile agent up -d
 python agent/host_run.py --mode whitebox --role attacker --build
-ls samples/CVE-2025-24928/submission/whitebox/        # 应出现 poc.bin + patch.diff
+ls cases/CVE-2025-24928/submission/whitebox/        # 应出现 poc.bin + patch.diff
 
 # ④ 全闭环评测（三 agent + 真编译 + 重放判分，1~2 小时）
-python samples/CVE-2025-24928/organizer/evaluator/docker_env.py --run-agent
+python cases/CVE-2025-24928/organizer/evaluator/docker_env.py --run-agent
 ```
 
 要点：
@@ -52,7 +52,7 @@ python samples/CVE-2025-24928/organizer/evaluator/docker_env.py --run-agent
 - **④ 自动完成**：`compose down -v` → 起 `--profile agent` 全套（含 egress 代理）→
   备份现有 `submission/` 到 `team_result/` → 白盒攻击者 → 真编译 patch → 黑盒攻击者 →
   黑盒防御者 → 重放判分 → 输出 JSON 报告。跳过③时 ④ 需加 `--build-agent` 首建 agent 镜像。
-- 无 docker 的纯逻辑自检：`python samples/CVE-2025-24928/organizer/evaluator/local_harness.py`（3 用例应全 PASS）。
+- 无 docker 的纯逻辑自检：`python cases/CVE-2025-24928/organizer/evaluator/local_harness.py`（3 用例应全 PASS）。
 
 ## 3. 分数怎么读
 
@@ -87,7 +87,7 @@ datasetLikeE2e/
 ├── README.md                 ← 本文件（从这里开始）
 ├── team.env.example          ← 复制为 team.env，唯一必填配置
 ├── agent/                    ← 通用 agent 环境（标准接口 + 预置 codex/qwen-code，独立于赛题）
-└── samples/CVE-2025-24928/   ← 样例赛题（libxml2 栈溢出，Web 攻击链 + 蓝队联动）
+└── cases/CVE-2025-24928/   ← 样例赛题（libxml2 栈溢出，Web 攻击链 + 蓝队联动）
     ├── organizer/            ← 组织方：环境编排 + 评分器（真编译 + 重放，不随题包下发）
     ├── whitebox/ blackbox/   ← 分发的两份题包（含镜像 tar，见 _deliver/）
     ├── submission/           ← agent 交付物落点（whitebox/{poc.bin,patch.diff} + blackbox/poc.bin）
@@ -98,7 +98,7 @@ datasetLikeE2e/
 ## 6. 分发与交付
 
 - 对外发包用 `_deliver/` 下的 `CVE-2025-24928-{whitebox,blackbox}.tar.gz`
-  （题面 + 离线镜像 tar，生成方式见 `samples/CVE-2025-24928/organizer/package_challenge.sh`）。
+  （题面 + 离线镜像 tar，生成方式见 `cases/CVE-2025-24928/organizer/package_challenge.sh`）。
 - 组织方自建环境：`organizer/docker-compose.yml` + `IMAGE_DELIVERY.md` 的镜像构建/导入流程。
 - 新增赛题：复制样例目录结构，替换 `agent_task.json`（三角色任务内容，赛题根目录）与
   漏洞环境即可，agent 侧零改动。

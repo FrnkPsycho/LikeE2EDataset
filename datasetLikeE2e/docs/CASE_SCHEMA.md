@@ -74,7 +74,7 @@
 ## 2. 目录结构（必须提供）
 
 ```
-samples/<CASE_ID>/                      # CASE_ID 建议 = CVE 编号
+cases/<CASE_ID>/                      # CASE_ID 建议 = CVE 编号
 ├── case.json                           # 评测配置（见 §3，出题人写这个，不写代码）
 ├── agent_task.json                     # 三角色题面（见 §4）
 ├── case.env                            # 网络拓扑 + agent 网络策略（见 §5.4）
@@ -101,7 +101,7 @@ samples/<CASE_ID>/                      # CASE_ID 建议 = CVE 编号
 └── results/  submission/               # 运行产物（框架自动创建，不用建）
 ```
 
-**自动发现**：`run.py` 扫描 `samples/*/`，一个目录含 `case.json` + `agent_task.json` 就被识别为一道题；
+**自动发现**：`run.py` 扫描 `cases/*/`，一个目录含 `case.json` + `agent_task.json` 就被识别为一道题；
 含 `.port-incomplete` 的被跳过。
 
 ---
@@ -192,7 +192,7 @@ samples/<CASE_ID>/                      # CASE_ID 建议 = CVE 编号
 
 **题面分层是硬要求**：白盒给源码级、黑盒给组件级、蓝队不给。凭证写死位置（如 `/tmp/flag`），强调"每次评测随机变化，要真读出来"。白盒/黑盒都写明"不要盲投，验证成功再提交"。
 
-交付物路径固定（见 §6）。完整模板见 `samples/_template/agent_task.json`。
+交付物路径固定（见 §6）。完整模板见 `cases/_template/agent_task.json`。
 
 ---
 

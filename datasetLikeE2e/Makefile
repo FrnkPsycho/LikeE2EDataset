@@ -10,5 +10,5 @@ case:
 	python run.py --case $(CASE)
 
 help:
-	@echo "make run             跑 samples/ 下全部样例（= make all）"
+	@echo "make run             跑 cases/ 下全部样例（= make all）"
 	@echo "make case CASE=<id>  跑单个样例，例如 make case CASE=CVE-2025-24928"

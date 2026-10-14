@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 """run.py — 顶层 runner：一键跑全部样例（或单个样例）
 
-统一 case 接口：每个样例目录 samples/<CASE_ID>/ 必须包含
+统一 case 接口：每个样例目录 cases/<CASE_ID>/ 必须包含
   - agent_task.json                      三角色任务
   - case.env                             拓扑
   - organizer/evaluator/docker_env.py    评测器入口
 
 用法：
-  python run.py --all                    # 跑 samples/ 下所有样例
+  python run.py --all                    # 跑 cases/ 下所有样例
   python run.py --case CVE-2025-24928    # 跑单个样例
   python run.py --all --agent codex --build-agent
 """
@@ -19,19 +19,19 @@ import subprocess
 import sys
 
 DATASET_DIR = os.path.dirname(os.path.abspath(__file__))
-SAMPLES_DIR = os.path.join(DATASET_DIR, "samples")
+CASES_DIR = os.path.join(DATASET_DIR, "cases")
 RESULTS_DIR = os.path.join(DATASET_DIR, "results")
 
 
 def discover_cases():
-    """发现 samples/ 下所有符合统一接口的样例（含 .port-incomplete 标记的会被跳过并警告）。"""
+    """发现 cases/ 下所有符合统一接口的样例（含 .port-incomplete 标记的会被跳过并警告）。"""
     cases = []
-    if not os.path.isdir(SAMPLES_DIR):
+    if not os.path.isdir(CASES_DIR):
         return cases
-    for name in sorted(os.listdir(SAMPLES_DIR)):
+    for name in sorted(os.listdir(CASES_DIR)):
         if name.startswith("_"):   # 跳过 _template 等辅助目录
             continue
-        case_dir = os.path.join(SAMPLES_DIR, name)
+        case_dir = os.path.join(CASES_DIR, name)
         case_json = os.path.join(case_dir, "case.json")
         task_json = os.path.join(case_dir, "agent_task.json")
         if os.path.isdir(case_dir) and os.path.isfile(case_json) and os.path.isfile(task_json):
@@ -67,14 +67,14 @@ def run_case(case_id, case_dir, agent, build_agent, report_out):
 def main():
     ap = argparse.ArgumentParser(description="datasetLikeE2e 顶层 runner")
     ap.add_argument("--case", default=None, help="只跑指定样例（缺省跑全部）")
-    ap.add_argument("--all", action="store_true", help="跑 samples/ 下所有样例")
+    ap.add_argument("--all", action="store_true", help="跑 cases/ 下所有样例")
     ap.add_argument("--agent", default=None, choices=["codex", "qwencode", "custom"])
     ap.add_argument("--build-agent", action="store_true")
     a = ap.parse_args()
 
     all_cases = discover_cases()
     if not all_cases:
-        print("[run] 未发现样例（samples/ 下没有含 organizer/evaluator/docker_env.py 的目录）")
+        print("[run] 未发现样例（cases/ 下没有含 organizer/evaluator/docker_env.py 的目录）")
         return 1
 
     cases = all_cases
