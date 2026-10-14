@@ -1,0 +1,39 @@
+{
+  "case_id": "<CASE_ID>",
+  "judgment": {
+    "type": "flag",
+    "flag_path": "/tmp/flag",
+    "nonce_write": "printf '%s' {nonce} > /tmp/flag; chmod 0644 /tmp/flag"
+  },
+  "target": {
+    "image": "<项目名>/<target>:1",
+    "patched_image": "<项目名>/<target>:patched",
+    "container": "<项目名>bb-<target>",
+    "compose_service": "bb_<target>",
+    "target_image_env": "TARGET_IMAGE",
+    "healthy_check": "container"
+  },
+  "gateway": {
+    "mgmt_url": "http://127.0.0.1:<端口>",
+    "admin_token": "local-admin-token"
+  },
+  "replay": {
+    "driver": "http",
+    "gateway": "http://bb_shared_egress:80",
+    "traffic_container": "<项目名>bb-traffic_runner",
+    "evidence_key": "body_text",
+    "reference_cmd": "python traffic/reference_poc.py --gateway http://bb_shared_egress:80"
+  },
+  "patch": {
+    "build_cmd": "bash whitebox/service/build.sh patched {patch}"
+  },
+  "business": {
+    "driver": "pytest",
+    "cmd": "cd /work && python -m pytest business_tests/test_business.py -q"
+  },
+  "defense": {
+    "driver": "gateway",
+    "dir": "blackbox/defense",
+    "module": "blue_controller"
+  }
+}

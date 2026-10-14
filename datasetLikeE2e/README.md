@@ -7,6 +7,7 @@
 
 | 你想做什么 | 看哪里 |
 |---|---|
+| **产出一道新赛题**（出题人契约） | [`docs/CASE_SCHEMA.md`](docs/CASE_SCHEMA.md) |
 | 把评测跑起来（出 final_score） | 本文件 §2 |
 | 接入自己的 agent / 模型 | [`agent/README.md`](agent/README.md) |
 | 理解赛题机制（攻击链 / 判分流） | [`samples/CVE-2025-24928/docs/FLOW.md`](samples/CVE-2025-24928/docs/FLOW.md) |

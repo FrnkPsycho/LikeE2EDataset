@@ -29,10 +29,12 @@ def discover_cases():
     if not os.path.isdir(SAMPLES_DIR):
         return cases
     for name in sorted(os.listdir(SAMPLES_DIR)):
+        if name.startswith("_"):   # 跳过 _template 等辅助目录
+            continue
         case_dir = os.path.join(SAMPLES_DIR, name)
-        eval_py = os.path.join(case_dir, "organizer", "evaluator", "docker_env.py")
+        case_json = os.path.join(case_dir, "case.json")
         task_json = os.path.join(case_dir, "agent_task.json")
-        if os.path.isdir(case_dir) and os.path.isfile(eval_py) and os.path.isfile(task_json):
+        if os.path.isdir(case_dir) and os.path.isfile(case_json) and os.path.isfile(task_json):
             cases.append((name, case_dir))
     return cases
 
@@ -49,9 +51,10 @@ def split_incomplete(cases):
 
 
 def run_case(case_id, case_dir, agent, build_agent, report_out):
-    """跑单个样例：调它自己的 docker_env.py --run-agent，报告落盘 report_out。"""
-    eval_py = os.path.join(case_dir, "organizer", "evaluator", "docker_env.py")
-    cmd = [sys.executable, "-u", eval_py, "--run-agent", "--report-out", report_out]
+    """跑单个样例：调通用配置驱动引擎 generic_env.py --run-agent，报告落盘 report_out。"""
+    generic = os.path.join(DATASET_DIR, "evaluator", "generic_env.py")
+    cmd = [sys.executable, "-u", generic, "--case-dir", case_dir,
+           "--run-agent", "--report-out", report_out]
     if agent:
         cmd += ["--agent", agent]
     if build_agent:
@@ -92,6 +95,10 @@ def main():
     summary = {"cases": []}
     for case_id, case_dir in cases:
         report_out = os.path.join(RESULTS_DIR, f"{case_id}.json")
+        # 删掉上一轮的旧报告：docker_env 失败（异常退出）时不会写新报告，
+        # 残留的旧文件会被误读成「本轮分数」（曾导致 6553 误报 12:04 的旧分）
+        if os.path.isfile(report_out):
+            os.remove(report_out)
         rc = run_case(case_id, case_dir, a.agent, a.build_agent, report_out)
         entry = {"case_id": case_id, "exit_code": rc}
         if os.path.isfile(report_out):

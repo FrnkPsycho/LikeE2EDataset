@@ -1,0 +1,173 @@
+# <CASE_ID> —— 黑盒评测拓扑（模板）
+
+# 出题人改：
+#   name: <项目名>（与 case.env 的 COMPOSE_PROJECT 一致）
+#   各服务 container_name / image 的前缀 <项目名>bb- / <项目名>/
+#   bb_<target> 是业务外壳 + 漏洞载体（要自己写 target/Dockerfile）
+#   ${TARGET_IMAGE:-<vul 镜像>} 让评测器能切 vul/patched
+
+# 通用组件（security_gateway / shared_egress / runner / traffic 的 replay_poc）可从既有 case 复制。
+# 网络隔离是结构性约束：egress_net(红队/流量) / gateway_net(出口+网关) /
+# target_net(网关+目标) / mgmt_net(蓝队+网关管理) / agent_net+egress_out(squid 出网)。
+
+name: <项目名>
+
+services:
+  # ── 业务外壳 + 漏洞载体（出题人写 target/Dockerfile）──
+  bb_<target>:
+    build:
+      context: ./<target>
+    image: ${TARGET_IMAGE:-<项目名>/<target>:1}
+    container_name: <项目名>bb-<target>
+    networks:
+      target_net:
+        ipv4_address: 172.32.0.3
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "<探活：业务就绪判据>"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 3s
+
+  # ── 唯一策略执行点 + 唯一蓝队观测点（通用，复制即可）──
+  bb_security_gateway:
+    build:
+      context: ./security_gateway
+    image: <项目名>/policy-gateway:1
+    container_name: <项目名>bb-security_gateway
+    networks:
+      gateway_net:
+        ipv4_address: 172.31.0.3
+      target_net:
+        ipv4_address: 172.32.0.2
+      mgmt_net:
+        ipv4_address: 172.33.0.2
+    restart: unless-stopped
+    environment:
+      GATEWAY_UPSTREAM_HOST: bb_<target>
+      GATEWAY_UPSTREAM_PORT: "80"
+      GATEWAY_ADMIN_TOKEN: "${GATEWAY_ADMIN_TOKEN:-local-admin-token}"
+      GATEWAY_S5_TOKEN: "${GATEWAY_S5_TOKEN:-local-s5-token}"
+      GATEWAY_S6_TOKEN: "${GATEWAY_S6_TOKEN:-local-s6-token}"
+    ports:
+      - "127.0.0.1:<端口>:8080"     # 仅宿主机回环
+    volumes:
+      - gateway_data:/data
+    depends_on:
+      bb_<target>:
+        condition: service_healthy
+
+  # ── 共享出口（通用，复制即可）──
+  bb_shared_egress:
+    build:
+      context: ./shared_egress
+    image: <项目名>/transparent-proxy:1
+    container_name: <项目名>bb-shared_egress
+    networks:
+      gateway_net:
+        ipv4_address: 172.31.0.2
+      egress_net:
+        ipv4_address: 172.30.0.2
+    restart: unless-stopped
+    environment:
+      PROXY_ROLE: bb-shared-egress
+      LISTEN_PORT: "80"
+      UPSTREAM_HOST: bb_security_gateway
+      UPSTREAM_PORT: "80"
+    depends_on:
+      - bb_security_gateway
+
+  # ── 红队 agent（只 egress_net，不挂答案）──
+  bb_red_agent:
+    build:
+      context: ./runner
+    image: <项目名>/runner:1
+    container_name: <项目名>bb-red_agent
+    networks:
+      egress_net:
+        ipv4_address: 172.30.0.10
+    volumes:
+      - ../submission/red_team:/work:rw
+    working_dir: /work
+    command: ["sh", "-c", "while true; do sleep 3600; done"]
+
+  # ── 流量运行器（重放/业务回归宿主）──
+  bb_traffic_runner:
+    build:
+      context: ./runner
+    image: <项目名>/runner:1
+    container_name: <项目名>bb-traffic_runner
+    networks:
+      egress_net:
+        ipv4_address: 172.30.0.20
+    volumes:
+      - ./traffic:/work/traffic:ro
+      - ./business_tests:/work/business_tests:ro
+    working_dir: /work
+    environment:
+      GATEWAY_URL: "http://bb_shared_egress:80"
+    command: ["sh", "-c", "while true; do sleep 3600; done"]
+
+  # ── 蓝队（受测对象，只 mgmt_net，不挂答案、无 token）──
+  bb_blue_team:
+    build:
+      context: ./runner
+    image: <项目名>/runner:1
+    container_name: <项目名>bb-blue_team
+    networks:
+      mgmt_net:
+        ipv4_address: 172.33.0.3
+    environment:
+      GATEWAY_MGMT_URL: "http://bb_security_gateway:8080"
+    volumes:
+      - ../submission/blue_team:/work:rw
+    working_dir: /work
+    command: ["sh", "-c", "while true; do sleep 3600; done"]
+    depends_on:
+      - bb_security_gateway
+
+  # ── egress 代理（squid，qrj agent 模型出网口，通用）──
+  egress_proxy:
+    image: ubuntu/squid:5.2
+    profiles: ["agent"]
+    container_name: <项目名>bb-egress_proxy
+    networks:
+      - agent_net
+      - egress_out
+    volumes:
+      - ./egress/squid.conf:/etc/squid/squid.conf:ro
+    restart: unless-stopped
+
+networks:
+  egress_net:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  gateway_net:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
+  target_net:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.32.0.0/24
+  mgmt_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.33.0.0/24
+  agent_net:
+    driver: bridge
+    internal: true
+  egress_out:
+    driver: bridge
+
+volumes:
+  gateway_data:

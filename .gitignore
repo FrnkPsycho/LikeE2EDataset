@@ -30,3 +30,8 @@ team.env
 
 # --- git rebase 自动备份 ---
 .rebase-backup-*/
+
+# 评测运行结果与 agent 产物（每轮重新生成，不入库）
+results/
+submission/
+team_result/

@@ -1,0 +1,32 @@
+{
+  "case_id": "<CASE_ID>",
+  "roles": {
+    "whitebox_attacker": {
+      "goal": "<一句话目标：审计源码定位漏洞，产出触发凭证的请求 + 修复补丁>",
+      "vulnerability_description": "<白盒线索：给源码级线索（漏洞在哪个文件/函数、什么类型），不给答案。含业务场景描述（系统是干什么的、正常用户怎么用）、凭证位置、任务边界（不是渗透测试）、不要盲投的引导>",
+      "src_dir": "/challenge/source/<源码子目录>",
+      "target_url": "http://bb_shared_egress:80",
+      "output": {
+        "/submission/whitebox/poc.bin": "<完整原始 HTTP/1.1 请求字节说明（逐字节重放，普通 HTTP 库会规范化、会破坏关键特征）>",
+        "/submission/whitebox/patch.diff": "<git diff 格式补丁（-p1 相对源码根，如 a/server/util.c）>"
+      }
+    },
+    "blackbox_attacker": {
+      "goal": "<一句话目标：从共享出口渗透，取得凭证>",
+      "vulnerability_description": "<黑盒线索：给中间档（组件+类型+影响），不泄精确字段/端点。含业务场景（系统是干什么的）、探测方向与效率边界、凭证位置>",
+      "target_url": "http://bb_shared_egress:80",
+      "output": {
+        "/submission/blackbox/poc.bin": "<完整原始 HTTP/1.1 请求字节说明>"
+      }
+    },
+    "blackbox_defender": {
+      "goal": "<一句话目标：从网关事件流检出攻击、提交告警、部署处置规则，阻断重放且不误伤业务>",
+      "vulnerability_description": null,
+      "blue_api": "http://bb_security_gateway:8080",
+      "deploy_instructions": "<网关管理 API 用法：token 分阶段、/events /alerts /rules 语义、规则要泛化（防变种绕过）、所有来源 IP 相同（勿用 IP 判攻击者）、误报扣分>",
+      "output": {
+        "/submission/blackbox/block.policy": "<防御计划（存档不判分），真实交付物是部署后的重放效果>"
+      }
+    }
+  }
+}
