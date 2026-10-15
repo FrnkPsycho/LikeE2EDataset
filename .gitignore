@@ -35,3 +35,5 @@ team.env
 results/
 submission/
 team_result/
+node_modules/
+squid.conf
