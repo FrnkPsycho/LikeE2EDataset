@@ -5,7 +5,7 @@
 统一 case 接口：每个样例目录 cases/<CASE_ID>/ 必须包含
   - agent_task.json                      三角色任务
   - case.env                             拓扑
-  - organizer/evaluator/docker_env.py    评测器入口
+  - case.json                            评测配置（通用引擎 evaluator/generic_env.py 读它判分）
 
 用法：
   python run.py --all                    # 跑 cases/ 下所有样例
@@ -74,7 +74,7 @@ def main():
 
     all_cases = discover_cases()
     if not all_cases:
-        print("[run] 未发现样例（cases/ 下没有含 organizer/evaluator/docker_env.py 的目录）")
+        print("[run] 未发现样例（cases/ 下没有同时含 case.json 与 agent_task.json 的目录）")
         return 1
 
     cases = all_cases

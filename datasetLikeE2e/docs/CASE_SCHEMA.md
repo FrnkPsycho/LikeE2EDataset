@@ -35,6 +35,8 @@
 6. **写配置**：`case.json` + `agent_task.json` + `case.env`。
 7. **静态校验**：`python validate_case.py <case_dir>`，全 PASS。
 8. **标定**：`python evaluator/generic_env.py --case-dir <case_dir> --calibrate`，`final_score == 1.0` 后删 `.port-incomplete`，纳入 `run.py --all`。
+   标定是「**参考 PoC 打参考补丁**」的自检：白盒 S1/S2 和黑盒 S1/S5/S6 都由参考攻击代打，
+   你不需要往 `submission/` 里预放任何产物（放了也会先被清掉），也不必依赖上次跑剩下的文件。
 
 ---
 

@@ -3,7 +3,7 @@
 """host_run.py — 宿主侧驱动（通用，独立于赛题）：生成 task.json → 跑 agent 容器 → 收产物。
 
 这是「agent 标准接口落地」的宿主侧：把 agent 容器跑起来、让它现场产出 /submission/ 下的
-交付物。判分走各赛题 organizer/evaluator/docker_env.py（真编译+重放），本模块只负责
+交付物。判分走各赛题 evaluator/generic_env.py（真编译+重放），本模块只负责
 「跑 agent、收产物」，不判分。一套环境用于所有赛题，赛题差异只来自 --case-dir。
 
 配置两文件（谁维护什么）：

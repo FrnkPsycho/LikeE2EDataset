@@ -1,6 +1,6 @@
 # datasetLikeE2e/evaluator —— 跨赛题共享的评测组件
 #
-# 每个 case 的 organizer/evaluator/docker_env.py 通过 sys.path 引用这里：
+# 通用引擎 evaluator/generic_env.py 通过 sys.path 引用这里：
 #   - retry.py    瞬时失败退避重测 + InfrastructureError（设施失败 ≠ 受测方 0 分）
 #   - oracle.py   nonce 凭证（flag 型判据：生成/指纹/轮换/判定 fresh vs stale）
 #   - evaluate.py S1-S7 编排 + 评分纪律（execution_status × scoring_disposition，

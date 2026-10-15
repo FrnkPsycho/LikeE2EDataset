@@ -42,7 +42,7 @@ python agent/host_run.py --mode whitebox --role attacker --build
 ls cases/CVE-2025-24928/submission/whitebox/        # 应出现 poc.bin + patch.diff
 
 # ④ 全闭环评测（三 agent + 真编译 + 重放判分，1~2 小时）
-python cases/CVE-2025-24928/organizer/evaluator/docker_env.py --run-agent
+python evaluator/generic_env.py --case-dir cases/CVE-2025-24928 --run-agent
 ```
 
 要点：
