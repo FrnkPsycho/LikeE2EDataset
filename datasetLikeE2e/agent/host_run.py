@@ -57,6 +57,14 @@ def run_agent(case_dir, mode, role, agent=None, custom_entrypoint=None,
         "OPENAI_API_KEY": team_env.get("MODEL_API_KEY") or os.environ.get("OPENAI_API_KEY"),
         "OPENAI_MODEL": team_env.get("MODEL_NAME") or os.environ.get("OPENAI_MODEL"),
     }
+    # codex 侧行为开关（可选）：推理强度 / 联网搜索。缺省由 entrypoint 兜底
+    # （high / disabled，理由见 entrypoint.codex.sh 的注释）；这里只在被测方
+    # 显式声明时透传，用来覆盖默认值。
+    for container_key, team_key in (("CODEX_REASONING_EFFORT", "MODEL_REASONING_EFFORT"),
+                                    ("CODEX_WEB_SEARCH", "MODEL_WEB_SEARCH")):
+        v = team_env.get(team_key)
+        if v:
+            model[container_key] = v
 
     # 网络：由 case.env 决定（不再硬编码 organizer_client_net）
     agent_net = case_env.get("AGENT_NETWORK")

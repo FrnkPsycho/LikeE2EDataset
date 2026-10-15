@@ -5,10 +5,10 @@
 静态检查，不需要 docker。在标定（--calibrate）之前拦住低级错误，避免把不合格的
 题丢给评测器浪费一次 1 小时的跑。校验维度：
 
-  1. 目录结构     —— run.py 能否发现它（agent_task.json + organizer/evaluator/docker_env.py）
+  1. 目录结构     —— run.py 能否发现它（agent_task.json + case.json）
   2. agent_task.json —— 合法 JSON + 三角色 + 必填字段 + 交付物路径
   3. case.env     —— 拓扑必填键
-  4. docker_env.py —— 定义 DockerEnvironment 并实现 8 个方法 + case_id/judgment（AST，不执行）
+  4. case.json    —— 评测配置（判据/目标/重放/补丁/业务/防御段齐全且取值合法）
   5. ground_truth —— reference_patch.diff 存在且非空
   6. blackbox/docker-compose.yml —— 含目标/网关/共享出口服务 + 必需网络
 
@@ -18,7 +18,6 @@
 退出码：0 = 全部通过；1 = 有 FAIL。
 """
 import argparse
-import ast
 import json
 import os
 import sys
@@ -27,8 +26,6 @@ DATASET_DIR = os.path.dirname(os.path.abspath(__file__))
 CASES_DIR = os.path.join(DATASET_DIR, "cases")
 
 REQUIRED_ROLES = ("whitebox_attacker", "blackbox_attacker", "blackbox_defender")
-REQUIRED_METHODS = ("run_attack", "run_reference_attack", "apply_patch",
-                    "business_passing", "detect", "contain", "attack_blocked", "reset")
 REQUIRED_ENV_KEYS = ("CASE_ID", "COMPOSE_PROJECT", "AGENT_NETWORK", "EGRESS_PROXY",
                      "BLACKBOX_ATTACKER_NETWORK", "BLACKBOX_DEFENDER_NETWORK", "BLUE_API")
 
@@ -56,7 +53,7 @@ def _check_structure(case, errs, warns):
 
     need("agent_task.json")
     need("case.env")
-    need("organizer/evaluator/docker_env.py")
+    need("case.json")
     need("organizer/evaluator/prepare_case.py")
     need("blackbox/docker-compose.yml")
     need("ground_truth/reference_patch.diff")
@@ -106,37 +103,58 @@ def _check_env(case, errs):
             errs.append(f"case.env 缺键 {k}")
 
 
-def _check_docker_env(case, errs):
-    p = os.path.join(case, "organizer", "evaluator", "docker_env.py")
+def _check_case_json(case, errs):
+    """校验 case.json（评测配置）：段齐全、取值合法、按判据类型查特有字段。
+
+    出题人不写评测代码，判分全靠这份配置，所以这里查得细一点 —— 配置写错
+    在标定阶段只会表现为「某阶段莫名 0 分」，很难定位。
+    """
+    p = os.path.join(case, "case.json")
     if not os.path.isfile(p):
         return
     try:
         with open(p, encoding="utf-8") as f:
-            tree = ast.parse(f.read())
-    except SyntaxError as e:
-        errs.append(f"docker_env.py 语法错误：{e}")
+            cfg = json.load(f)
+    except json.JSONDecodeError as e:
+        errs.append(f"case.json 不是合法 JSON：{e}")
         return
-    cls = None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == "DockerEnvironment":
-            cls = node
-            break
-    if cls is None:
-        errs.append("docker_env.py 未定义 class DockerEnvironment")
-        return
-    methods = {n.name for n in cls.body if isinstance(n, ast.FunctionDef)}
-    for m in REQUIRED_METHODS:
-        if m not in methods:
-            errs.append(f"DockerEnvironment 缺方法 {m}")
-    class_attrs = set()
-    for n in cls.body:
-        if isinstance(n, ast.Assign):
-            for t in n.targets:
-                if isinstance(t, ast.Name):
-                    class_attrs.add(t.id)
-    for a in ("case_id", "judgment"):
-        if a not in class_attrs:
-            errs.append(f"DockerEnvironment 缺类属性 {a}")
+
+    if not cfg.get("case_id"):
+        errs.append("case.json 缺 case_id")
+
+    judgment = cfg.get("judgment") or {}
+    jtype = judgment.get("type")
+    if jtype not in ("flag", "crash"):
+        errs.append(f"judgment.type 必须是 flag/crash，实际 {jtype!r}")
+    if jtype == "flag":
+        for k in ("flag_path", "nonce_write"):
+            if not judgment.get(k):
+                errs.append(f"flag 型必须给 judgment.{k}")
+
+    target = cfg.get("target") or {}
+    for k in ("image", "patched_image", "compose_service", "target_image_env", "healthy_check"):
+        if not target.get(k):
+            errs.append(f"target 缺 {k}")
+    if target.get("healthy_check") not in (None, "container", "http", "sleep"):
+        errs.append(f"target.healthy_check 取值非法：{target.get('healthy_check')!r}")
+
+    replay = cfg.get("replay") or {}
+    driver = replay.get("driver")
+    if driver not in ("http", "script"):
+        errs.append(f"replay.driver 必须是 http/script，实际 {driver!r}")
+    if driver == "http":
+        for k in ("gateway", "traffic_container"):
+            if not replay.get(k):
+                errs.append(f"http 型重放缺 replay.{k}")
+    elif driver == "script" and not replay.get("attack_cmd"):
+        errs.append("script 型重放缺 replay.attack_cmd")
+
+    if not (cfg.get("patch") or {}).get("build_cmd"):
+        errs.append("patch 缺 build_cmd（补丁必须真编译）")
+    if not (cfg.get("business") or {}).get("driver"):
+        errs.append("business 缺 driver")
+    if not (cfg.get("defense") or {}).get("driver"):
+        errs.append("defense 缺 driver")
 
 
 def _check_ground_truth(case, errs):
@@ -164,7 +182,7 @@ def validate_case(case_dir):
     _check_structure(case, errs, warns)
     _check_task(case, errs)
     _check_env(case, errs)
-    _check_docker_env(case, errs)
+    _check_case_json(case, errs)
     _check_ground_truth(case, errs)
     _check_compose(case, errs)
     return errs, warns

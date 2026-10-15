@@ -122,6 +122,7 @@ class ConfigEnvironment(Environment):
         self._s1_events = []
         self._defender_mode = "reference"
         self._track = "whitebox"
+        self.calibrate = False   # --calibrate 时置 True：S1/S2 改用参考 PoC 自检
 
         prepare_egress(self.team_env, self.squid_conf)
         self.dc(["down", "-v"], timeout=120)
@@ -138,8 +139,12 @@ class ConfigEnvironment(Environment):
     # ---- 基础设施 ----
     def dc(self, args, image=None, timeout=900):
         env = dict(os.environ)
-        if image and self.target_image_env:
-            env[self.target_image_env] = image
+        # 始终把当前目标镜像锁进 TARGET_IMAGE：compose 每次都会用它重算服务配置，
+        # 只要有一次没传，缺省值（vul）就会把 target 重建回漏洞镜像 —— 打完补丁的
+        # S2/S4 会因此变成「攻击依然成功」，白盒修复项恒为 0。
+        tag = image or self.image
+        if tag and self.target_image_env:
+            env[self.target_image_env] = tag
         return subprocess.run(["docker", "compose", "-f", self.compose_file] + args,
                               cwd=self.case_dir, capture_output=True, encoding="utf-8",
                               errors="replace", timeout=timeout, env=env)
@@ -260,6 +265,12 @@ class ConfigEnvironment(Environment):
     # ---- Environment 接口 ----
     def run_attack(self) -> bool:
         self._set_phase("S1")
+        if self.calibrate:
+            # 标定自检：没有被测方提交的 poc.bin，改用出题方参考 PoC 代打。
+            # 标定要验的是「无防御时这道题确实可利用」和「打完参考补丁后同一攻击
+            # 不再成立」，这两件事用参考 PoC 判定即可，不应依赖 submission/ 里
+            # 恰好躺着上次跑剩的文件。
+            return self.run_reference_attack()
         poc = os.path.join(self._sub_dir(), self._track, "poc.bin")
         if not os.path.isfile(poc):
             return False
@@ -287,6 +298,8 @@ class ConfigEnvironment(Environment):
                                     self.case_dir)
         self.image = image
         self._swap_target(image)
+        if not self._wait_target():
+            raise InfrastructureError("切到 patched 镜像后目标未就绪：设施问题")
         if self.judgment == "flag":
             self._set_nonce()
 
@@ -326,7 +339,12 @@ class ConfigEnvironment(Environment):
         if self._defender_mode == "reference":
             self._set_phase("S5")
             poc = os.path.join(self._sub_dir(), "blackbox", "poc.bin")
-            if os.path.isfile(poc):
+            if self.calibrate:
+                # 标定自检：没有被测方 poc.bin，用参考攻击产生蓝队可见的攻击事件，
+                # 否则蓝队看不到任何东西，S5 恒为 0。
+                self.run_reference_attack()
+                self._s1_events = self._attack_window_events()
+            elif os.path.isfile(poc):
                 if self.replay_driver == "script":
                     self._run_attack_script(poc)
                 else:
@@ -376,6 +394,9 @@ class ConfigEnvironment(Environment):
             raise InfrastructureError(f"参考防御 {action} 失败: {e}")
 
     def attack_blocked(self) -> bool:
+        if self.calibrate:
+            # 标定自检：没有被测方 poc.bin，用参考攻击代表「同一类攻击」重放。
+            return not self.run_reference_attack()
         poc = os.path.join(self._sub_dir(), self._track, "poc.bin")
         if not os.path.isfile(poc):
             return False
@@ -433,9 +454,14 @@ def build_patched_image(build_cmd, patch_path, out_tag, case_dir):
 def run_calibration(case_dir):
     cfg = load_config(case_dir)
     sub_dir = os.path.join(case_dir, "submission")
-    os.makedirs(os.path.join(sub_dir, "whitebox"), exist_ok=True)
-    os.makedirs(os.path.join(sub_dir, "blackbox"), exist_ok=True)
+    # 先清空 submission：标定走的是参考 PoC / 参考补丁，不该被上一次跑剩下的文件
+    # 影响 —— 否则「标定全绿」只说明残留文件还在，不说明这道题自洽。
+    for track in ("whitebox", "blackbox"):
+        d = os.path.join(sub_dir, track)
+        shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d, exist_ok=True)
     env = ConfigEnvironment(case_dir)
+    env.calibrate = True   # S1/S2 用参考 PoC 代打（标定不依赖 submission 里的残留文件）
     # 标定用参考 PoC：由 reference_cmd/脚本生成；这里让出题人在 case.json 里声明 poc 生成命令
     poc_gen = cfg.get("calibration", {}).get("poc_bytes_cmd")
     if poc_gen:
@@ -457,7 +483,7 @@ def run_calibration(case_dir):
             "whitebox": wb, "blackbox": bb, "final_score": final}
 
 
-def run_with_agent(case_dir, agent=None, build_agent=False):
+def run_with_agent(case_dir, agent=None, build_agent=False, blackbox_only=False):
     cfg = load_config(case_dir)
     team_env = envfile.parse(os.path.join(DATASET_DIR, "team.env"))
     agent = agent or team_env.get("AGENT") or "codex"
@@ -477,11 +503,14 @@ def run_with_agent(case_dir, agent=None, build_agent=False):
     env._defender_mode = "agent"
 
     case_env = os.path.join(case_dir, "case.env")
-    rc_wb = host_run.run_agent(case_dir, "whitebox", "attacker", agent=agent,
-                               build=build_agent, timeout=1800,
-                               team_env_path=os.path.join(DATASET_DIR, "team.env"),
-                               case_env_path=case_env)
-    wb = run_whitebox(env)
+    rc_wb = None
+    wb = None
+    if not blackbox_only:
+        rc_wb = host_run.run_agent(case_dir, "whitebox", "attacker", agent=agent,
+                                   build=build_agent, timeout=1800,
+                                   team_env_path=os.path.join(DATASET_DIR, "team.env"),
+                                   case_env_path=case_env)
+        wb = run_whitebox(env)
 
     env.reset()
     rc_bb_att = host_run.run_agent(case_dir, "blackbox", "attacker", agent=agent,
@@ -505,7 +534,9 @@ def run_with_agent(case_dir, agent=None, build_agent=False):
     bb = run_blackbox(env, defend=_defend)
 
     final = None
-    if wb["whitebox_score"] is not None and bb["blackbox_score"] is not None:
+    if wb is None:
+        final = bb["blackbox_score"]
+    elif wb["whitebox_score"] is not None and bb["blackbox_score"] is not None:
         final = round((wb["whitebox_score"] + bb["blackbox_score"]) / 2, 3)
     return {"case_id": cfg["case_id"], "team_id": team_id,
             "judgment": cfg.get("judgment", {}).get("type"),
@@ -522,12 +553,14 @@ def main():
     ap.add_argument("--calibrate", action="store_true")
     ap.add_argument("--agent", default=None, choices=["codex", "qwencode", "custom"])
     ap.add_argument("--build-agent", action="store_true")
+    ap.add_argument("--blackbox-only", action="store_true", help="只跑黑盒（跳过白盒攻击者）")
     ap.add_argument("--report-out", default=None)
     a = ap.parse_args()
 
     case = os.path.abspath(a.case_dir)
     if a.run_agent:
-        report = run_with_agent(case, agent=a.agent, build_agent=a.build_agent)
+        report = run_with_agent(case, agent=a.agent, build_agent=a.build_agent,
+                                blackbox_only=a.blackbox_only)
     elif a.calibrate:
         report = run_calibration(case)
     else:

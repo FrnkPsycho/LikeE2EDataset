@@ -146,12 +146,17 @@ networks:
     ipam:
       config:
         - subnet: 172.30.0.0/24
+          # 动态分配压到后半段，把 .2 留给 bb_shared_egress 的固定地址。
+          # Docker 不会跳过已被静态占用的地址，不划范围就会
+          # `Address already in use`（共享出口起不来）。
+          ip_range: 172.30.0.128/25
   gateway_net:
     driver: bridge
     internal: true
     ipam:
       config:
         - subnet: 172.31.0.0/24
+          ip_range: 172.31.0.128/25
   target_net:
     driver: bridge
     internal: true

@@ -38,7 +38,23 @@ docker run --rm <agent镜像> run_agent.sh \
 
 - Qwen Code 直接读这三个变量（也兼容 `ANTHROPIC_*` / `GEMINI_*`）。
 - Codex 由 `entrypoint.codex.sh` 生成 `~/.codex/config.toml`（`wire_api="responses"`）。
-  **注意**：Codex 当前要求 Responses 协议；若端点只提供 chat completions，请用 Qwen Code。
+  **注意**：端点必须支持所选 agent 的协议 —— Codex 走 Responses，Qwen Code 走 chat
+  completions。实测 `open.bigmodel.cn` 的 `glm-5.3` 只有 Responses 可用
+  （`/chat/completions` 返回 403 `model_access_denied`），这类端点只能配 codex，
+  配 qwencode 会一次都调不通。
+
+### codex 行为开关（默认值就是评测口径）
+
+`entrypoint.codex.sh` 默认往 config.toml 写两项配置，它们直接改变被测 agent 的实际
+能力，不要随手删：
+
+| 配置 | 默认 | 为什么 |
+|---|---|---|
+| `model_reasoning_effort` | `high` | codex 只对内置元数据认识的模型名决定推理强度，遇到不认识的模型名（国产端点常见）会回落到 `none`，等于把推理模型的思维链整个关掉，评测会系统性低估推理型模型 |
+| `web_search` | `disabled` | codex 默认开启联网搜索，而且这个工具由**模型服务端**执行、不经过容器的 egress 代理，题目侧的网络隔离拦不住（实测能搜到上游安全公告与 oss-security 邮件列表）。评测要防「搜到现成 PoC」，所以默认关掉 |
+
+两项都可以由 `team.env` 的 `MODEL_REASONING_EFFORT` / `MODEL_WEB_SEARCH` 覆盖
+（`host_run.py` 把它们透传成容器里的 `CODEX_REASONING_EFFORT` / `CODEX_WEB_SEARCH`）。
 
 ## 3. 逐题替换：agent_task.json
 
@@ -76,14 +92,14 @@ python datasetLikeE2e/agent/host_run.py \
 
 ## 6. 与判分管线的衔接
 
-`host_run.py` 只「跑 agent 收产物」，判分走各赛题 `organizer/evaluator/docker_env.py`。
-`docker_env.py --run-agent` 已把三阶段 agent 接入闭环：白盒攻击者（poc.bin + patch.diff）→
-黑盒攻击者（poc.bin）→ 黑盒防御者（读日志 `GET /log` + 部署 `POST /deploy`），S5/S6/S4 按
-「部署后的真实重放效果」判分。`.policy` 只是存档形式（自然语言/JSON 均可），不参与判分——
-防御的**真实交付物是部署**（封 IP + WAF 规则 + 检测签名）。
+`host_run.py` 只「跑 agent 收产物」，判分由通用引擎 `evaluator/generic_env.py` 读各赛题的
+`case.json` 完成（**出题人不写评测代码**）。`generic_env.py --run-agent` 已把三阶段 agent
+接入闭环：白盒攻击者（poc.bin + patch.diff）→ 黑盒攻击者（poc.bin）→ 黑盒防御者（读日志
+`GET /log` + 部署 `POST /deploy`），S5/S6/S4 按「部署后的真实重放效果」判分。`.policy` 只是
+存档形式（自然语言/JSON 均可），不参与判分 —— 防御的**真实交付物是部署**（封 IP + WAF 规则
++ 检测签名）。
 
-> 产物命名对齐既有代码：白盒修复产物用 **`patch.diff`**（`patch_build.py` 实际读取），
-> 不是 TODO §5-① 里写的 `fix.patch`（该处口径待同步）。
+> 产物命名对齐既有代码：白盒修复产物用 **`patch.diff`**（`patch_build.py` 实际读取）。
 
 ## 7. 配置两文件：team.env（被测方）+ case.env（赛题）
 

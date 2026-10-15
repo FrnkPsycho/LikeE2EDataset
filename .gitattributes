@@ -4,3 +4,13 @@
 # 镜像 tar / 源码包 tar 是二进制，禁止行尾转换
 *.tar binary
 *.tar.gz binary
+
+# 脚本类必须 LF：Windows 上 checkout 会把文本文件转成 CRLF，shebang 变成
+# `#!/bin/sh\r`，容器里 exec 直接失败（Apache 的 .cgi、agent 的 entrypoint.*.sh
+# 都踩过，见 datasetLikeE2e/docs/CASE_SCHEMA.md「已知坑」第 1 条）。
+*.sh          text eol=lf
+*.cgi         text eol=lf
+Dockerfile    text eol=lf
+Dockerfile.*  text eol=lf
+Makefile      text eol=lf
+*.conf        text eol=lf
