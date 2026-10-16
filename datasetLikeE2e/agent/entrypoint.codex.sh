@@ -51,4 +51,19 @@ cd /workspace
 #   沙箱 + 审批提示，否则容器内会因「bwrap 无法建命名空间 / approval policy is
 #   Never」卡死。官方说明本 flag「专为外部已沙箱化的环境」设计——外层 Docker
 #   的网络/权限隔离才是 benchmark 真正的边界。
-exec codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox "$PROMPT"
+#
+# 输出同时落一份到 /tmp/agent_run.log：跑完要据此区分「agent 没做出来」和
+# 「设施坏了」。模型额度用尽、DNS 挂掉这类错误不写盘的话，agent 会静悄悄退出，
+# 评测器只看到「没有交付物」→ 判 0 分，把环境问题记到被测方头上。
+RUN_LOG=/tmp/agent_run.log
+set -o pipefail
+codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox "$PROMPT" 2>&1 | tee "$RUN_LOG"
+rc=${PIPESTATUS[0]}
+
+# 设施级错误的特征。只认「模型侧调不通」这一类（额度/限流/DNS），刻意不含
+# connection refused / 401 / 403 —— 那些在打目标时是正常现象，认了会误判。
+if grep -qiE "quota exceeded|insufficient_quota|insufficient quota|rate limit|too many requests|could not resolve host|network is unreachable" "$RUN_LOG"; then
+    echo "[codex] 检测到设施级错误（模型额度 / 网络），退出码 3 = 设施失败，不计入成绩" >&2
+    exit 3
+fi
+exit "$rc"

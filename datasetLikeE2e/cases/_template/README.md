@@ -12,7 +12,8 @@
 3. 搭 `blackbox/` 环境：业务外壳（target）+ 网关 + 出口 + 正常流量 + 参考 PoC + 业务回归。
 4. 写 `ground_truth/`：参考补丁 + 业务断言 + 防御家族（真值变种）。
 5. 搭 `whitebox/`：源码能拉取、能真编译、agent 能挂载审计。
-6. 写 `case.json`（评测配置）+ `agent_task.json`（三层线索）+ `case.env`（拓扑）。
+6. 写 `case.json`（评测配置）+ `agent_task.json`（三角色题面，写法见 schema §4：白盒只给源码和
+   部署事实、黑盒只给漏洞类别）+ `case.env`（拓扑）。
 7. 跑 `python ../../validate_case.py <case_dir>` 静态校验。
 8. 跑 `python ../../evaluator/generic_env.py --case-dir <case_dir> --calibrate`，标定到 `final_score==1.0`。
 9. 删 `.port-incomplete`，纳入 `run.py --all`。

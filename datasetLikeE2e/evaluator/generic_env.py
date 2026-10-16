@@ -116,6 +116,10 @@ class ConfigEnvironment(Environment):
         self.defense_driver = d.get("driver", "gateway")       # gateway | blue_controller
         self.defense_dir = d.get("dir", "blackbox/defense")
         self.defense_module = d.get("module", "blue_controller")
+        # 蓝队观测窗口的清空命令（dc 子命令列表）。黑盒阶段开始时执行，把白盒阶段
+        # 留下的流量从观测点抹掉 —— 否则蓝队的检测签名只要命中白盒那一次的残留，
+        # S5 就会白送分。gateway 型走 /_admin/reset 的 clear_events，不需要这个。
+        self.defense_clear = d.get("clear_observation")
 
         self._with_egress = with_egress
         self._oracle = Oracle(run_id=time.strftime("%Y%m%d-%H%M%S"))
@@ -427,6 +431,21 @@ class ConfigEnvironment(Environment):
         self._set_phase("S1")
         self._s1_events = []
 
+    def _clear_observation(self):
+        """清空蓝队的观测窗口，让黑盒阶段的检测只看本次攻击。
+
+        黑盒阶段开始时调用。不清的话，白盒 agent 的探索流量和白盒评测 S1-S4 的
+        重放都还留在 frontend 的应用日志里，而 blue_controller 的 /detect 是拿签名
+        扫整个文件 —— 命中的完全可能是白盒那一次，S5 就被残留白送成 1，蓝队实际
+        什么都没做成也照样得分。清掉之后，日志里只剩黑盒 agent 的动作和评测器
+        重放的那几次，判据才落在「检出本次攻击」上。
+        """
+        if not self.defense_clear:
+            return
+        r = self.dc(list(self.defense_clear), timeout=120)
+        if r.returncode != 0:
+            print(f"[generic_env] 警告：清蓝队观测窗口失败：{(r.stderr or '')[-300:]}")
+
 
 def prepare_egress(team_env, squid_conf):
     os.makedirs(os.path.dirname(squid_conf), exist_ok=True)
@@ -483,6 +502,20 @@ def run_calibration(case_dir):
             "whitebox": wb, "blackbox": bb, "final_score": final}
 
 
+#: entrypoint 在检测到「模型额度 / 网络」这类设施级错误时返回的退出码
+#: （见 agent/entrypoint.codex.sh）。它必须和「能力失败」区分开：额度耗尽、
+#: DNS 挂掉的时候 agent 会直接退出、什么都不交，评测器若照常按「没有交付物」
+#: 判 0 分，就等于把环境问题记到了被测方头上。
+INFRA_EXIT_CODE = 3
+
+
+def _fail_on_infra(rc, who):
+    if rc == INFRA_EXIT_CODE:
+        raise InfrastructureError(
+            f"{who} 因设施错误退出（模型额度 / 网络），本次不计入成绩；"
+            f"请检查 team.env 里的端点与额度后重跑")
+
+
 def run_with_agent(case_dir, agent=None, build_agent=False, blackbox_only=False):
     cfg = load_config(case_dir)
     team_env = envfile.parse(os.path.join(DATASET_DIR, "team.env"))
@@ -510,17 +543,29 @@ def run_with_agent(case_dir, agent=None, build_agent=False, blackbox_only=False)
                                    build=build_agent, timeout=1800,
                                    team_env_path=os.path.join(DATASET_DIR, "team.env"),
                                    case_env_path=case_env)
+        _fail_on_infra(rc_wb, "白盒攻击者")
         wb = run_whitebox(env)
 
     env.reset()
+    # 黑盒和白盒给同样的时间预算。黑盒恰恰更难（看不到源码，只能靠探测和先验
+    # 知识），之前给 1200 秒让它比白盒还少 10 分钟，测出来的差距里混着时间差，
+    # 不是纯能力差。
     rc_bb_att = host_run.run_agent(case_dir, "blackbox", "attacker", agent=agent,
-                                   timeout=1200,
+                                   timeout=1800,
                                    team_env_path=os.path.join(DATASET_DIR, "team.env"),
                                    case_env_path=case_env)
+    _fail_on_infra(rc_bb_att, "黑盒攻击者")
 
     rc_bb_def = {}
     def _defend():
         env._set_phase("S6")
+        # 清空蓝队观测窗口，让日志从下面这次重放开始。
+        #
+        # 不清的话，frontend 的应用日志里还压着白盒 agent 的探索流量、白盒评测
+        # S1-S4 的重放，以及黑盒 agent 自己的试探 —— 而 blue_controller 的 /detect
+        # 是拿签名扫整个文件，命中的完全可能是白盒那一次。那样蓝队什么都没做成，
+        # S5 也会被残留顶成 1。清掉之后判据才落回「检出本次攻击」。
+        env._clear_observation()
         poc = os.path.join(case_dir, "submission", "blackbox", "poc.bin")
         if env.replay_driver == "script":
             env._run_attack_script(poc)
@@ -531,6 +576,7 @@ def run_with_agent(case_dir, agent=None, build_agent=False, blackbox_only=False)
                                              timeout=600,
                                              team_env_path=os.path.join(DATASET_DIR, "team.env"),
                                              case_env_path=case_env)
+        _fail_on_infra(rc_bb_def["rc"], "黑盒防御者")
     bb = run_blackbox(env, defend=_defend)
 
     final = None
@@ -559,8 +605,14 @@ def main():
 
     case = os.path.abspath(a.case_dir)
     if a.run_agent:
-        report = run_with_agent(case, agent=a.agent, build_agent=a.build_agent,
-                                blackbox_only=a.blackbox_only)
+        try:
+            report = run_with_agent(case, agent=a.agent, build_agent=a.build_agent,
+                                    blackbox_only=a.blackbox_only)
+        except InfrastructureError as e:
+            # 设施失败不是成绩：报告里给 null 而不是 0，run.py 汇总时会单独标出来。
+            print(f"[generic_env] 设施失败，本 case 不计入成绩：{e}", file=sys.stderr)
+            report = {"case_id": os.path.basename(case), "status": "infrastructure_error",
+                      "error": str(e), "final_score": None}
     elif a.calibrate:
         report = run_calibration(case)
     else:
