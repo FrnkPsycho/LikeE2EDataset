@@ -113,7 +113,16 @@ class ConfigEnvironment(Environment):
         self.business_command = b.get("command", [])           # command 驱动：dc run 参数列表
 
         d = self.cfg.get("defense", {})
-        self.defense_driver = d.get("driver", "gateway")       # gateway | blue_controller
+        self.defense_driver = d.get("driver", "gateway")       # 只支持 gateway，见下方校验
+        # blue_controller 型蓝队已废弃：它的观测点是应用日志全文、/detect 只回一个
+        # 布尔值，判据不区分「命中的是哪一次攻击」，白盒阶段的残留流量会把 S5 白送
+        # 出去（历史上真出过这个问题，靠外部截断日志打补丁）。gateway 型的观测点是
+        # 带 event_id / phase / run_id 的结构化事件，判定天然落在攻击窗口内，不需要
+        # 任何外部补丁。新题一律用 gateway；这里直接拒绝其它取值，避免又滑回去。
+        if self.defense_driver != "gateway":
+            raise InfrastructureError(
+                f"不支持的 defense.driver={self.defense_driver!r}：blue_controller 型已废弃，"
+                f"请改用 gateway（观测点带 event_id 的结构化事件流）")
         self.defense_dir = d.get("dir", "blackbox/defense")
         self.defense_module = d.get("module", "blue_controller")
         # 蓝队观测窗口的清空命令（dc 子命令列表）。黑盒阶段开始时执行，把白盒阶段
@@ -149,9 +158,11 @@ class ConfigEnvironment(Environment):
         tag = image or self.image
         if tag and self.target_image_env:
             env[self.target_image_env] = tag
-        return subprocess.run(["docker", "compose", "-f", self.compose_file] + args,
-                              cwd=self.case_dir, capture_output=True, encoding="utf-8",
-                              errors="replace", timeout=timeout, env=env)
+        r = subprocess.run(["docker", "compose", "-f", self.compose_file] + args,
+                           cwd=self.case_dir, capture_output=True, encoding="utf-8",
+                           errors="replace", timeout=timeout, env=env)
+        _raise_on_daemon_error(r, args)
+        return r
 
     def dsh(self, container, cmd, timeout=120):
         return subprocess.run(["docker", "exec", container, "sh", "-c", cmd],
@@ -500,6 +511,27 @@ def run_calibration(case_dir):
         final = round((wb["whitebox_score"] + bb["blackbox_score"]) / 2, 3)
     return {"case_id": cfg["case_id"], "mode": "calibration", "scored": False,
             "whitebox": wb, "blackbox": bb, "final_score": final}
+
+
+#: docker / compose **自身**的故障特征。这类输出不是「命令正常跑完但返回非 0」，
+#: 而是设施坏了（daemon 不可达、宿主机挂载失败、容器根本没起来）。必须抛
+#: InfrastructureError —— 否则上层只看到「退出码非 0」，会读成「攻击没打中」判 0 分，
+#: 把环境问题记到被测方头上。实测踩过：Docker Desktop 的 D 盘 bind mount 故障会让
+#: 所有攻击容器起不来，整题静默判 0。
+_DAEMON_ERROR_SIGNS = (
+    "Error response from daemon",
+    "Cannot connect to the Docker daemon",
+    "error while creating mount source path",
+    "Is the docker daemon running",
+)
+
+
+def _raise_on_daemon_error(r, args):
+    blob = (r.stderr or "") + (r.stdout or "")
+    for sign in _DAEMON_ERROR_SIGNS:
+        if sign in blob:
+            raise InfrastructureError(
+                f"docker 设施故障（compose {' '.join(args[:2])}）：{blob.strip()[-300:]}")
 
 
 #: entrypoint 在检测到「模型额度 / 网络」这类设施级错误时返回的退出码

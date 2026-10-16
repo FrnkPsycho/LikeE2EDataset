@@ -124,7 +124,7 @@ cases/<CASE_ID>/                      # CASE_ID 建议 = CVE 编号
 | `target.target_image_env` | compose 里 `${X:-...}` 的环境变量名 |
 | `target.healthy_check` | `container`（healthcheck）/ `http`（curl 探活）/ `sleep` |
 | `gateway.mgmt_url` | 网关/蓝队管理面 URL |
-| `gateway.admin_token` | 管理 token（blue_controller 型留空） |
+| `gateway.admin_token` | 管理面认证 token，必须与 compose 里网关的 `GATEWAY_ADMIN_TOKEN` 一致（评测器用它读事件、判检出） |
 | `replay.driver` | `http`（原始请求到网关）/ `script`（跑攻击链命令） |
 | `replay.gateway` / `traffic_container` | http 型重放的网关 + 流量容器 |
 | `replay.evidence_key` | 响应里 nonce 在哪个字段（默认 `body_text`） |
@@ -134,9 +134,13 @@ cases/<CASE_ID>/                      # CASE_ID 建议 = CVE 编号
 | `patch.build_cmd` | 补丁真编译 shell 命令，`{patch}` 占位 |
 | `business.driver` | `pytest` / `http` / `command` |
 | `business.cmd` / `tests` / `command` | 对应驱动的参数 |
-| `defense.driver` | `gateway`（policy gateway）/ `blue_controller`（旧版蓝队） |
-| `defense.dir` / `module` | 参考防御模块位置 |
-| `defense.clear_observation` | **blue_controller 型必填**：黑盒阶段开始、重放攻击之前执行的 `docker compose` 子命令，用来清空蓝队的观测窗口。写法见下方 3.2。不清的话，蓝队的检测签名会命中白盒阶段留在日志里的流量，S5 被白送成分 |
+| `defense.driver` | 固定 `gateway`。**蓝队只有这一种形态**：策略执行点与观测点都内建在安全网关里，蓝队通过它的管理面读结构化事件、提交告警与处置规则 |
+| `defense.dir` / `module` | 参考防御模块位置（标定用，暴露 `GatewayClient` / `detect()` / `contain()`） |
+
+> 历史上有过一种 `blue_controller` 型（独立容器 + 读应用日志全文 + `/detect` 只回布尔值）。
+> **已废弃**：它的判据不区分「命中的是哪一次攻击」，白盒阶段留在日志里的流量会把 S5 白送出去。
+> gateway 型的事件带 `event_id` / `phase` / `run_id`，判定天然落在攻击窗口内，不需要外部补丁。
+> 评测器现在会直接拒绝非 `gateway` 的取值。
 
 ### 3.1 flag 型（http 重放）示例 —— 参考 CVE-2021-41773
 
@@ -171,14 +175,13 @@ cases/<CASE_ID>/                      # CASE_ID 建议 = CVE 编号
   "target": {"image": "datasetlikee2e/target:vul", "patched_image": "datasetlikee2e/target:patched",
              "container": null, "compose_service": "target",
              "target_image_env": "TARGET_IMAGE", "healthy_check": "sleep"},
-  "gateway": {"mgmt_url": "http://127.0.0.1:9000", "admin_token": ""},
+  "gateway": {"mgmt_url": "http://127.0.0.1:9000", "admin_token": "local-admin-token"},
   "replay": {"driver": "script",
              "attack_cmd": ["-e", "POC_PATH=/submission/{track}/poc.bin", "red_team"],
              "reference_attack_cmd": ["red_team_gt"]},
   "patch": {"build_cmd": "python organizer/evaluator/build_wrapper.py"},
   "business": {"driver": "command", "command": ["normal_business"]},
-  "defense": {"driver": "blue_controller", "dir": "blackbox/defense", "module": "blue_controller",
-              "clear_observation": ["exec", "-T", "frontend", "sh", "-c", ": > /data/app.log"]}
+  "defense": {"driver": "gateway", "dir": "blackbox/defense", "module": "blue_controller"}
 }
 ```
 
