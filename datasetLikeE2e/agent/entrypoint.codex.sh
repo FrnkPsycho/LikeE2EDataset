@@ -60,10 +60,17 @@ set -o pipefail
 codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox "$PROMPT" 2>&1 | tee "$RUN_LOG"
 rc=${PIPESTATUS[0]}
 
-# 设施级错误的特征。只认「模型侧调不通」这一类（额度/限流/DNS），刻意不含
-# connection refused / 401 / 403 —— 那些在打目标时是正常现象，认了会误判。
-if grep -qiE "quota exceeded|insufficient_quota|insufficient quota|rate limit|too many requests|could not resolve host|network is unreachable" "$RUN_LOG"; then
-    echo "[codex] 检测到设施级错误（模型额度 / 网络），退出码 3 = 设施失败，不计入成绩" >&2
-    exit 3
+# 设施级错误的判定，只认两条：**codex 自己非零退出**，且它自己打出了 `ERROR:` 行。
+#
+# 不能扫整份日志里的关键词——agent 干活时会打印目标的响应、蓝队会写包含
+# "rate limit / could not resolve host" 这类字样的防御规则，它甚至会 `cat` 自己的
+# 入口脚本，把下面这行 grep 模式原样打印进日志。扫全文的结果是：**检测器匹配到
+# 了自己**，把一轮成功完成（告警已提交、规则已部署、block.policy 已写）的评测
+# 误判成设施失败。实测踩过。
+if [ "$rc" -ne 0 ] && grep -qE '^ERROR: ' "$RUN_LOG"; then
+    if grep -qiE '^ERROR: .*(quota|insufficient|rate limit|too many requests|network|reconnecting|connection reset|unauthorized|api key|401|403)' "$RUN_LOG"; then
+        echo "[codex] 检测到设施级错误（模型额度 / 鉴权 / 网络），退出码 3 = 设施失败，不计入成绩" >&2
+        exit 3
+    fi
 fi
 exit "$rc"
