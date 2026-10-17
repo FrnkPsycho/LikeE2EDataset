@@ -15,4 +15,6 @@
 | `business_tests/test_business.py` | 业务回归（pytest，S3/S7 判据） | 出题人 |
 | `runner/Dockerfile` | 通用 runner 镜像（跑 traffic/defense/business） | **复制** |
 
-**关键点**：蓝队容器 `bb_blue_team` 不挂任何答案（defense/traffic/ground_truth 都不挂），environment 里不预置 token。
+**关键点**：蓝队是评测器临时起的独立 agent 容器，只通过网关管理面工作——compose 里**没有**蓝队服务，也不给任何容器挂答案（defense/traffic/ground_truth 都不挂）、environment 里不预置 token。
+
+**服务命名**：语义裸名（`target` / `gateway` / `egress` / `traffic` / `normal`），不加前缀，不写 `container_name`；流量容器一律 `profiles: ["traffic"]` 一次性。

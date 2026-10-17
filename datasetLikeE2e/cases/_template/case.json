@@ -8,8 +8,8 @@
   "target": {
     "image": "<项目名>/<target>:1",
     "patched_image": "<项目名>/<target>:patched",
-    "container": "<项目名>bb-<target>",
-    "compose_service": "bb_<target>",
+    "container": null,
+    "compose_service": "target",
     "target_image_env": "TARGET_IMAGE",
     "healthy_check": "container"
   },
@@ -18,18 +18,27 @@
     "admin_token": "local-admin-token"
   },
   "replay": {
-    "driver": "http",
-    "gateway": "http://bb_shared_egress:80",
-    "traffic_container": "<项目名>bb-traffic_runner",
-    "evidence_key": "body_text",
-    "reference_cmd": "python traffic/reference_poc.py --gateway http://bb_shared_egress:80"
+    "driver": "command",
+    "attack_cmd": [
+      "-v", "{poc}:/poc/poc.bin",
+      "traffic",
+      "python", "traffic/replay_poc.py", "--poc", "/poc/poc.bin", "--gateway", "http://egress:80"
+    ],
+    "reference_attack_cmd": [
+      "traffic",
+      "python", "traffic/reference_poc.py", "--gateway", "http://egress:80"
+    ],
+    "evidence_key": "body_text"
   },
   "patch": {
     "build_cmd": "bash whitebox/service/build.sh patched {patch}"
   },
   "business": {
-    "driver": "pytest",
-    "cmd": "cd /work && python -m pytest business_tests/test_business.py -q"
+    "driver": "command",
+    "command": [
+      "traffic", "sh", "-c",
+      "cd /work && python -m pytest business_tests/test_business.py -q"
+    ]
   },
   "defense": {
     "driver": "gateway",

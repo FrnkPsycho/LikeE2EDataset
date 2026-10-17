@@ -2,26 +2,49 @@
 
 # 出题人改：
 #   name: <项目名>（与 case.env 的 COMPOSE_PROJECT 一致）
-#   各服务 container_name / image 的前缀 <项目名>bb- / <项目名>/
-#   bb_<target> 是业务外壳 + 漏洞载体（要自己写 target/Dockerfile）
+#   <target> 是业务外壳 + 漏洞载体（要自己写 target/Dockerfile）
 #   ${TARGET_IMAGE:-<vul 镜像>} 让评测器能切 vul/patched
-
-# 通用组件（security_gateway / shared_egress / runner / traffic 的 replay_poc）可从既有 case 复制。
-# 网络隔离是结构性约束：egress_net(红队/流量) / gateway_net(出口+网关) /
-# target_net(网关+目标) / mgmt_net(蓝队+网关管理) / agent_net+egress_out(squid 出网)。
+#   各服务的 image 前缀 <项目名>/
+#
+# 组织约定（三道现有 case 都按这个来，评测器也只依赖这些）：
+#   * 服务名用语义裸名，**不加前缀**：target / gateway / egress / traffic / normal，
+#     另有 case 专属业务组件按需（如 frontend、db）。
+#   * **不写 container_name**。评测器所有容器内操作都走
+#     `docker compose exec <service>`，只认服务名，容器名交给 compose 默认。
+#   * **流量容器一律一次性**：`profiles: ["traffic"]`，由评测器
+#     `docker compose run --rm <service> <命令>` 拉起，跑完即销毁。不要写常驻容器
+#     （`while true; do sleep 3600; done`）—— 那是旧机制的残留，现在没有任何东西会去 exec 它。
+#   * 网络固定六张，名字固定：entry_net / gateway_net / target_net / mgmt_net /
+#     agent_net / egress_out。
+#
+# 数据面（全部经同一共享出口，网关看到的真实源 IP 完全一致）：
+#
+#   traffic ───┼─> egress ──> gateway ──> target
+#   normal ────┘
+#
+# 控制面：
+#   宿主机评测器 ──> gateway 管理 API (:8080)
+#   蓝队 agent   ──mgmt_net──> gateway 管理 API
+#
+# 网络隔离（结构性约束，不依赖配置自觉）：
+#   entry_net    红队/流量角色所在；**只有** egress，解析不到网关与目标
+#   gateway_net  仅 egress + gateway
+#   target_net   仅 gateway + target；无宿主机端口，红队不可达
+#   mgmt_net     蓝队 + 网关管理面；宿主机只回环发布
+#
+# 参考防御（blackbox/defense/）**没有容器**，只跑在宿主机；
+# 它不得出现在本文件的任何 volumes 里。
 
 name: <项目名>
 
 services:
   # ── 业务外壳 + 漏洞载体（出题人写 target/Dockerfile）──
-  bb_<target>:
+  target:
     build:
       context: ./<target>
     image: ${TARGET_IMAGE:-<项目名>/<target>:1}
-    container_name: <项目名>bb-<target>
     networks:
-      target_net:
-        ipv4_address: 172.32.0.3
+      - target_net
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "bash", "-c", "<探活：业务就绪判据>"]
@@ -30,12 +53,11 @@ services:
       retries: 12
       start_period: 3s
 
-  # ── 唯一策略执行点 + 唯一蓝队观测点（通用，复制即可）──
-  bb_security_gateway:
+  # ── 唯一策略执行点（数据面）+ 蓝队受控 API（管理面），通用，复制即可 ──
+  gateway:
     build:
       context: ./security_gateway
     image: <项目名>/policy-gateway:1
-    container_name: <项目名>bb-security_gateway
     networks:
       gateway_net:
         ipv4_address: 172.31.0.3
@@ -45,93 +67,73 @@ services:
         ipv4_address: 172.33.0.2
     restart: unless-stopped
     environment:
-      GATEWAY_UPSTREAM_HOST: bb_<target>
+      GATEWAY_UPSTREAM_HOST: target
       GATEWAY_UPSTREAM_PORT: "80"
       GATEWAY_ADMIN_TOKEN: "${GATEWAY_ADMIN_TOKEN:-local-admin-token}"
       GATEWAY_S5_TOKEN: "${GATEWAY_S5_TOKEN:-local-s5-token}"
       GATEWAY_S6_TOKEN: "${GATEWAY_S6_TOKEN:-local-s6-token}"
     ports:
-      - "127.0.0.1:<端口>:8080"     # 仅宿主机回环
+      - "127.0.0.1:<端口>:8080"     # 管理面仅宿主机回环
     volumes:
       - gateway_data:/data
     depends_on:
-      bb_<target>:
-        condition: service_healthy
+      - target
 
   # ── 共享出口（通用，复制即可）──
-  bb_shared_egress:
+  egress:
     build:
       context: ./shared_egress
     image: <项目名>/transparent-proxy:1
-    container_name: <项目名>bb-shared_egress
     networks:
       gateway_net:
         ipv4_address: 172.31.0.2
-      egress_net:
+      entry_net:
         ipv4_address: 172.30.0.2
     restart: unless-stopped
     environment:
-      PROXY_ROLE: bb-shared-egress
+      PROXY_ROLE: shared-egress
       LISTEN_PORT: "80"
-      UPSTREAM_HOST: bb_security_gateway
+      UPSTREAM_HOST: gateway
       UPSTREAM_PORT: "80"
+      LOG_REQUESTS: "1"
     depends_on:
-      - bb_security_gateway
+      - gateway
 
-  # ── 红队 agent（只 egress_net，不挂答案）──
-  bb_red_agent:
+  # ── 流量容器（一次性）：重放攻击 / 业务回归的宿主，由评测器 run 起来 ──
+  #    case.json 的 replay.attack_cmd / business.command 就是它的子命令
+  traffic:
     build:
       context: ./runner
     image: <项目名>/runner:1
-    container_name: <项目名>bb-red_agent
+    profiles: ["traffic"]
     networks:
-      egress_net:
-        ipv4_address: 172.30.0.10
-    volumes:
-      - ../submission/red_team:/work:rw
-    working_dir: /work
-    command: ["sh", "-c", "while true; do sleep 3600; done"]
-
-  # ── 流量运行器（重放/业务回归宿主）──
-  bb_traffic_runner:
-    build:
-      context: ./runner
-    image: <项目名>/runner:1
-    container_name: <项目名>bb-traffic_runner
-    networks:
-      egress_net:
-        ipv4_address: 172.30.0.20
+      - entry_net
     volumes:
       - ./traffic:/work/traffic:ro
       - ./business_tests:/work/business_tests:ro
     working_dir: /work
     environment:
-      GATEWAY_URL: "http://bb_shared_egress:80"
-    command: ["sh", "-c", "while true; do sleep 3600; done"]
+      GATEWAY_URL: "http://egress:80"
 
-  # ── 蓝队（受测对象，只 mgmt_net，不挂答案、无 token）──
-  bb_blue_team:
+  # ── 正常业务流量（一次性）：业务基线与 S7 口径 ──
+  normal:
     build:
       context: ./runner
     image: <项目名>/runner:1
-    container_name: <项目名>bb-blue_team
+    profiles: ["traffic"]
     networks:
-      mgmt_net:
-        ipv4_address: 172.33.0.3
-    environment:
-      GATEWAY_MGMT_URL: "http://bb_security_gateway:8080"
+      - entry_net
     volumes:
-      - ../submission/blue_team:/work:rw
+      - ./traffic:/work/traffic:ro
     working_dir: /work
-    command: ["sh", "-c", "while true; do sleep 3600; done"]
-    depends_on:
-      - bb_security_gateway
+    environment:
+      GATEWAY_URL: "http://egress:80"
+    command: ["python", "-u", "traffic/normal_traffic.py", "--gateway", "http://egress:80"]
 
-  # ── egress 代理（squid，qrj agent 模型出网口，通用）──
+  # ── egress 代理（squid，agent 的模型出网口，通用）──
   egress_proxy:
     image: ubuntu/squid:5.2
     profiles: ["agent"]
-    container_name: <项目名>bb-egress_proxy
     networks:
       - agent_net
       - egress_out
@@ -140,15 +142,16 @@ services:
     restart: unless-stopped
 
 networks:
-  egress_net:
+  # 入口网：红队 / 流量角色 / 黑盒攻击者 agent 都在此网。此网内**只有** egress，
+  # 解析不到网关与目标，也不通公网。
+  entry_net:
     driver: bridge
     internal: true
     ipam:
       config:
         - subnet: 172.30.0.0/24
-          # 动态分配压到后半段，把 .2 留给 bb_shared_egress 的固定地址。
-          # Docker 不会跳过已被静态占用的地址，不划范围就会
-          # `Address already in use`（共享出口起不来）。
+          # 动态分配压到后半段，把 .2 留给 egress 的固定地址。
+          # Docker 不会跳过已被静态占用的地址，不划范围就会 Address already in use。
           ip_range: 172.30.0.128/25
   gateway_net:
     driver: bridge
@@ -163,11 +166,14 @@ networks:
     ipam:
       config:
         - subnet: 172.32.0.0/24
+          ip_range: 172.32.0.128/25
   mgmt_net:
     driver: bridge
     ipam:
       config:
         - subnet: 172.33.0.0/24
+          ip_range: 172.33.0.128/25
+  # agent 隔离网（internal，无外网）+ squid 出口网（有外网）
   agent_net:
     driver: bridge
     internal: true

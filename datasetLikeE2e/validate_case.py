@@ -139,20 +139,21 @@ def _check_case_json(case, errs):
         errs.append(f"target.healthy_check 取值非法：{target.get('healthy_check')!r}")
 
     replay = cfg.get("replay") or {}
-    driver = replay.get("driver")
-    if driver not in ("http", "script"):
-        errs.append(f"replay.driver 必须是 http/script，实际 {driver!r}")
-    if driver == "http":
-        for k in ("gateway", "traffic_container"):
-            if not replay.get(k):
-                errs.append(f"http 型重放缺 replay.{k}")
-    elif driver == "script" and not replay.get("attack_cmd"):
-        errs.append("script 型重放缺 replay.attack_cmd")
+    if replay.get("driver") != "command":
+        errs.append(f"replay.driver 必须是 command（唯一重放形态），实际 {replay.get('driver')!r}")
+    if not replay.get("attack_cmd"):
+        errs.append("replay 缺 attack_cmd（dc run 参数列表）")
+    for stale in ("traffic_container", "gateway", "reference_cmd"):
+        if stale in replay:
+            errs.append(f"replay.{stale} 已废弃：重放统一为 command，路径写在 attack_cmd 里")
 
     if not (cfg.get("patch") or {}).get("build_cmd"):
         errs.append("patch 缺 build_cmd（补丁必须真编译）")
-    if not (cfg.get("business") or {}).get("driver"):
-        errs.append("business 缺 driver")
+    biz = cfg.get("business") or {}
+    if biz.get("driver") != "command":
+        errs.append(f"business.driver 必须是 command，实际 {biz.get('driver')!r}")
+    if not biz.get("command"):
+        errs.append("business 缺 command（dc run 参数列表）")
     if not (cfg.get("defense") or {}).get("driver"):
         errs.append("defense 缺 driver")
 
