@@ -36,8 +36,12 @@ def _run(cmd, **kw):
 
 def run_agent(case_dir, mode, role, agent=None, custom_entrypoint=None,
               submission_dir=None, log_file=None, image=IMAGE, timeout=1800,
-              build=False, team_env_path=None, case_env_path=None) -> int:
-    """跑一个 agent 容器产出交付物，返回退出码（0=正常，非 0=该阶段记 0 分）。"""
+              build=False, team_env_path=None, case_env_path=None, phase=None) -> int:
+    """跑一个 agent 容器产出交付物，返回退出码（0=正常，非 0=该阶段记 0 分）。
+
+    phase 仅对黑盒防御者有意义：同一个 defender 角色分两段会话，
+    s5 看 NDR 流量交告警、s6 读告警部署规则。
+    """
     case = os.path.abspath(case_dir)
     spec_path = os.path.join(case, "agent_task.json")
     if not os.path.exists(spec_path):
@@ -71,6 +75,7 @@ def run_agent(case_dir, mode, role, agent=None, custom_entrypoint=None,
     egress_proxy = case_env.get("EGRESS_PROXY")
     no_proxy = case_env.get("NO_PROXY")
     blue_api = case_env.get("BLUE_API")
+    ndr_api = case_env.get("NDR_API")
     networks = [agent_net] if agent_net else []
     if role == "attacker":
         # 白盒/黑盒攻击者都 join 业务网：白盒也要能打到目标做「复现验证 + 失败重试」
@@ -84,7 +89,7 @@ def run_agent(case_dir, mode, role, agent=None, custom_entrypoint=None,
             networks.append(mgmt_net)
 
     # 1. 生成 task.json（临时文件，供挂载）
-    task = gen_task.build(gen_task.load_spec(spec_path), mode, role, timeout)
+    task = gen_task.build(gen_task.load_spec(spec_path), mode, role, timeout, phase=phase)
     tmp = tempfile.mkdtemp(prefix="agent_task_")
     task_path = os.path.join(tmp, "task.json")
     with open(task_path, "w", encoding="utf-8") as f:
@@ -106,7 +111,8 @@ def run_agent(case_dir, mode, role, agent=None, custom_entrypoint=None,
     # 4. 组装 docker run（每个 agent 独立容器，输出留在容器内 /submission/，
     #    跑完后宿主 docker cp 回 submission/，不共享挂载 → agent 之间互看不到产物）
     import uuid
-    container = f"agent-{mode}-{role}-{uuid.uuid4().hex[:8]}"
+    tag = f"{mode}-{role}" + (f"-{phase}" if phase else "")
+    container = f"agent-{tag}-{uuid.uuid4().hex[:8]}"
     cmd = ["docker", "run", "--name", container,
            "-v", f"{ep}:/challenge/agent/entrypoint.sh:ro",
            "-v", f"{task_path}:/challenge/task.json:ro"]
@@ -126,6 +132,8 @@ def run_agent(case_dir, mode, role, agent=None, custom_entrypoint=None,
     # 蓝队部署接口（黑盒防御者读日志 + 部署防御用；由 case.env 提供）
     if blue_api:
         cmd += ["-e", f"BLUE_API={blue_api}"]
+    if ndr_api:
+        cmd += ["-e", f"NDR_API={ndr_api}"]
 
     # 出网管控：agent 只能经 egress 代理访问模型；内网目标直连（NO_PROXY）
     if egress_proxy:

@@ -2,7 +2,7 @@
 
 出题人从本目录复制一份、改名成 `<CASE_ID>`（建议 CVE 编号），按下面的顺序填内容即可。
 完整契约见 [`docs/CASE_SCHEMA.md`](../../docs/CASE_SCHEMA.md)。
-**出题人不写任何评测代码**——判分由框架通用引擎 `evaluator/generic_env.py` 读 `case.json` 完成。
+判分由框架通用引擎 `evaluator/generic_env.py` 读 `case.json` 完成。
 
 ## 产题顺序（重要：先想业务，再想漏洞）
 
@@ -12,8 +12,8 @@
 3. 搭 `blackbox/` 环境：业务外壳（target）+ 网关 + 出口 + 正常流量 + 参考 PoC + 业务回归。
 4. 写 `ground_truth/`：参考补丁 + 业务断言 + 防御家族（真值变种）。
 5. 搭 `whitebox/`：源码能拉取、能真编译、agent 能挂载审计。
-6. 写 `case.json`（评测配置）+ `agent_task.json`（三角色题面，写法见 schema §4：白盒只给源码和
-   部署事实、黑盒只给漏洞类别）+ `case.env`（拓扑）。
+6. 写 `case.json`（评测配置）+ `agent_task.json`（三份题面，写法见 schema §4：白盒只给源码和
+   部署事实，蓝队不给任何漏洞线索）+ `case.env`（拓扑）。
 7. 跑 `python ../../validate_case.py <case_dir>` 静态校验。
 8. 跑 `python ../../evaluator/generic_env.py --case-dir <case_dir> --calibrate`，标定到 `final_score==1.0`。
 9. 删 `.port-incomplete`，纳入 `run.py --all`。
@@ -23,9 +23,9 @@
 | 文件 | 说明 |
 |---|---|
 | `case.json` | **必须写**：评测配置（判据/重放/补丁/业务/防御，见 schema §3） |
-| `agent_task.json` | **必须写**：三角色题面（见 schema §4） |
+| `agent_task.json` | **必须写**：白盒攻击者与两段蓝队题面（见 schema §4） |
 | `case.env` | **必须写**：网络拓扑（见 schema §5.4 / §5.5） |
-| `blackbox/security_gateway/`、`shared_egress/`、`traffic/replay_poc.py`、`runner/Dockerfile` | **通用组件**，可从任意既有 case（如 CVE-2021-41773）原样复制 |
+| `blackbox/security_gateway/`、`blackbox/ndr/`、`shared_egress/`、`traffic/replay_poc.py`、`runner/Dockerfile` | **通用组件**，可从任意既有 case（如 CVE-2021-41773）原样复制 |
 | `blackbox/docker-compose.yml` | 拓扑骨架（复制改名字即可，服务/网络结构固定） |
 | `blackbox/target/`（业务外壳 + 漏洞载体） | **必须搭** |
 | `blackbox/traffic/reference_poc.py`（攻击链）、`normal_traffic.py`（正常业务） | **必须写** |

@@ -59,14 +59,14 @@ docker run --rm <agent镜像> run_agent.sh \
 ## 3. 逐题替换：agent_task.json
 
 每道赛题在 `agent_task.json`（赛题根目录）提供角色任务内容（`roles` 下按
-`whitebox_attacker` / `blackbox_attacker` / `blackbox_defender` 命名），`gen_task.py`
-据此生成 task.json。字段：
+`whitebox_attacker` / `blackbox_defender_s5` / `blackbox_defender_s6` 命名），`gen_task.py`
+据此生成 task.json。黑盒线没有攻击者角色，攻击流量由出题人提供。字段：
 
 | mode/role | 输入字段 | 产出文件 |
 |---|---|---|
 | whitebox / attacker | `src_dir` + 漏洞描述 | `whitebox/poc.bin` + `whitebox/patch.diff` |
-| blackbox / attacker | `vuln_info`（不含 CVE 编号）+ `target_url` | `blackbox/poc.bin` |
-| blackbox / defender | `blue_api` + `deploy_instructions`（读日志 + 部署防御） | `blackbox/block.policy`（存档，不判分） |
+| blackbox / defender（phase=s5） | `ndr_api` + `deploy_instructions`（读流量 + 交告警） | `blackbox/alerts.json`（存档，不判分） |
+| blackbox / defender（phase=s6） | `ndr_api` + `deploy_instructions`（读告警 + 部署规则） | `blackbox/block.policy`（存档，不判分） |
 
 ## 4. 文件清单（全通用，无赛题内容）
 
@@ -93,11 +93,12 @@ python datasetLikeE2e/agent/host_run.py \
 ## 6. 与判分管线的衔接
 
 `host_run.py` 只「跑 agent 收产物」，判分由通用引擎 `evaluator/generic_env.py` 读各赛题的
-`case.json` 完成（**出题人不写评测代码**）。`generic_env.py --run-agent` 已把三阶段 agent
-接入闭环：白盒攻击者（poc.bin + patch.diff）→ 黑盒攻击者（poc.bin）→ 黑盒防御者（读日志
-`GET /log` + 部署 `POST /deploy`），S5/S6/S4 按「部署后的真实重放效果」判分。`.policy` 只是
-存档形式（自然语言/JSON 均可），不参与判分 —— 防御的**真实交付物是部署**（封 IP + WAF 规则
-+ 检测签名）。
+`case.json` 完成（**出题人不写评测代码**）。`generic_env.py --run-agent` 已把 agent
+接入闭环：白盒攻击者（poc.bin + patch.diff）→ 出题方攻击流量进 NDR → 蓝队检测会话
+（读 `/traffic` + 交 `/alerts`）→ 蓝队处置会话（读 `/alerts` + 部署 `/rules`），
+S5/S6/S4 按「部署后的真实重放效果」判分。黑盒线没有攻击者角色。`alerts.json` 与
+`block.policy` 只是存档形式（自然语言/JSON 均可），不参与判分 —— 防御的**真实交付物是
+NDR 里实际提交的告警与规则**。
 
 > 产物命名对齐既有代码：白盒修复产物用 **`patch.diff`**（`patch_build.py` 实际读取）。
 
@@ -108,7 +109,7 @@ agent 环境读两个 `.env`，不再硬编码任何网络名/端点：
 | 文件 | 谁维护 | 内容 |
 |---|---|---|
 | `datasetLikeE2e/team.env` | **被测方**（一份） | 模型 `MODEL_BASE_URL`/`MODEL_API_KEY`/`MODEL_NAME`、agent 选择 `AGENT`（`codex`\|`qwencode`\|`custom`）+ `CUSTOM_ENTRYPOINT`、队伍 `TEAM_ID` |
-| `<case>/case.env` | **赛题**（一份） | 网络拓扑 `COMPOSE_PROJECT` + 三网名、`AGENT_NETWORK`/`EGRESS_PROXY`/`NO_PROXY`、黑盒攻击者 join 的 `BLACKBOX_ATTACKER_NETWORK`、黑盒防御者 join 的 `BLACKBOX_DEFENDER_NETWORK` + `BLUE_API` |
+| `<case>/case.env` | **赛题**（一份） | 网络拓扑 `COMPOSE_PROJECT` + 网络名、`AGENT_NETWORK`/`EGRESS_PROXY`/`NO_PROXY`、白盒攻击者 join 的 `BLACKBOX_ATTACKER_NETWORK`、蓝队 join 的 `BLACKBOX_DEFENDER_NETWORK` + `NDR_API` |
 
 模板见 `datasetLikeE2e/team.env.example`（复制为 `team.env` 填真实值；`MODEL_API_KEY` 是机密，
 建议不进版本库）。`team.env` 缺失时回落到宿主机 `OPENAI_*` 环境变量（旧用法仍可用）。
@@ -117,13 +118,11 @@ agent 环境读两个 `.env`，不再硬编码任何网络名/端点：
 
 agent 容器**无直连外网**：它只 join `agent_net`（internal，无公网路由），模型访问经
 `egress_proxy`（squid）出网，白名单 = `MODEL_BASE_URL` 的 host，其余全拒（`gen_squid.py`
-在 compose up 前自动生成 `organizer/egress/squid.conf`）。黑盒攻击者额外 join
-`case.env` 的 `BLACKBOX_ATTACKER_NETWORK`（client_net，已 `internal` 关闭外网），经
-`NO_PROXY` 直连网关 `security_gateway`。黑盒防御者额外 join `BLACKBOX_DEFENDER_NETWORK`
-（management_net），经 `BLUE_API`（`http://blue_controller:9000`）读日志 + 部署防御，
-`blue_controller` 已列入 `NO_PROXY` 直连。
+在 compose up 前自动生成 `organizer/egress/squid.conf`）。白盒攻击者额外 join
+`case.env` 的 `BLACKBOX_ATTACKER_NETWORK`（entry_net，已 `internal` 关闭外网），经
+`NO_PROXY` 直连共享出口。黑盒蓝队分两段会话（检测、处置），额外 join
+`BLACKBOX_DEFENDER_NETWORK`（blue_net），经 `NDR_API`（`http://ndr:8080`）读流量、
+提交告警、部署规则，`ndr` 已列入 `NO_PROXY` 直连。
 
-> 两个待验证点：(1) `client_net: internal: true` 后 blue_controller/gateway 的 127.0.0.1
-> 端口仍经 docker-proxy 可达（Docker Desktop 默认开启 userland-proxy，预期没问题）；
-> (2) codex/qwen-code 是否认 `HTTPS_PROXY`——若不认，模型调用会失败，需在 agent 镜像里装
-> `global-agent` 或设 `NODE_USE_ENV_PROXY=1`，或改透明代理。
+> 待验证点：codex/qwen-code 是否认 `HTTPS_PROXY`——若不认，模型调用会失败，需在 agent
+> 镜像里装 `global-agent` 或设 `NODE_USE_ENV_PROXY=1`，或改透明代理。

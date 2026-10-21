@@ -37,8 +37,12 @@ def build(task: dict) -> str:
         lines += ["", f"【目标】入口 {body['target_url']}（仅经此网关外部访问，不接触源码与运行环境内部）。"]
     if body.get("log_file"):
         lines += ["", f"【日志】攻击后的应用日志快照在 {body['log_file']}（含请求行/头/体，供检测）。"]
+    if body.get("ndr_api"):
+        lines += ["", f"【检测接口】{body['ndr_api']}（NDR 旁路流量：GET /traffic 读流量与详情，"
+                      f"POST /alerts 提交告警，GET /alerts 读告警）。"]
     if body.get("blue_api"):
-        lines += ["", f"【蓝队部署接口】{body['blue_api']}（GET /log 读日志，POST /deploy 部署防御）。"]
+        lines += ["", f"【处置接口】{body['blue_api']}（网关策略执行面：POST /rules 部署规则，"
+                      f"GET /rules 查看已部署规则）。"]
     if body.get("deploy_instructions"):
         lines += ["", "【部署步骤】", body["deploy_instructions"]]
 

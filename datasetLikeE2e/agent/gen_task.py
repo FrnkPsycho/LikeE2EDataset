@@ -18,11 +18,15 @@ def load_spec(path: str) -> dict:
         return json.load(f)
 
 
-def build(spec: dict, mode: str, role: str, timeout: int = 1800) -> dict:
-    """spec 里按 f"{mode}_{role}" 命名角色条目（whitebox_attacker / blackbox_attacker /
-    blackbox_defender），产出标准 task.json。"""
-    key = f"{mode}_{role}"
+def build(spec: dict, mode: str, role: str, timeout: int = 1800,
+          phase: str | None = None) -> dict:
+    """spec 里按 f"{mode}_{role}" 命名角色条目（whitebox_attacker /
+    blackbox_defender）。同一个角色可以分阶段定义（如黑盒防御者的
+    blackbox_defender_s5 / _s6），此时 phase 决定取哪一段。"""
+    key = f"{mode}_{role}" + (f"_{phase}" if phase else "")
     roles = spec.get("roles", {})
+    if key not in roles:
+        key = f"{mode}_{role}"
     if key not in roles:
         raise SystemExit(f"该赛题未定义 role 组合: {key}")
     s = roles[key]
@@ -30,6 +34,7 @@ def build(spec: dict, mode: str, role: str, timeout: int = 1800) -> dict:
         "case_id": spec.get("case_id"),
         "mode": mode,
         "role": role,
+        "phase": phase,
         "timeout": timeout,
         "task": {k: v for k, v in s.items() if k != "output"},
         "output": s["output"],
@@ -42,10 +47,11 @@ def main():
     ap.add_argument("--mode", required=True, choices=["whitebox", "blackbox"])
     ap.add_argument("--role", required=True, choices=["attacker", "defender"])
     ap.add_argument("--timeout", type=int, default=1800)
+    ap.add_argument("--phase", default=None, help="同一角色的阶段条目后缀（如 s5 / s6）")
     ap.add_argument("--out", default=None, help="输出文件；缺省打印到 stdout")
     a = ap.parse_args()
 
-    task = build(load_spec(a.spec), a.mode, a.role, a.timeout)
+    task = build(load_spec(a.spec), a.mode, a.role, a.timeout, phase=a.phase)
     s = json.dumps(task, ensure_ascii=False, indent=2)
     if a.out:
         with open(a.out, "w", encoding="utf-8") as f:

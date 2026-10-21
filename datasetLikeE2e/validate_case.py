@@ -25,9 +25,9 @@ import sys
 DATASET_DIR = os.path.dirname(os.path.abspath(__file__))
 CASES_DIR = os.path.join(DATASET_DIR, "cases")
 
-REQUIRED_ROLES = ("whitebox_attacker", "blackbox_attacker", "blackbox_defender")
+REQUIRED_ROLES = ("whitebox_attacker", "blackbox_defender_s5", "blackbox_defender_s6")
 REQUIRED_ENV_KEYS = ("CASE_ID", "COMPOSE_PROJECT", "AGENT_NETWORK", "EGRESS_PROXY",
-                     "BLACKBOX_ATTACKER_NETWORK", "BLACKBOX_DEFENDER_NETWORK", "BLUE_API")
+                     "BLACKBOX_ATTACKER_NETWORK", "BLACKBOX_DEFENDER_NETWORK", "NDR_API")
 
 
 def _parse_env(path):
@@ -86,14 +86,19 @@ def _check_task(case, errs):
         out = role.get("output") or {}
         if not out:
             errs.append(f"roles.{r} 缺 output")
-    # 交付物路径（白盒两个、黑盒攻击者一个）
+    # 交付物路径：白盒两个产物；蓝队两段各一个存档文件
     wb_out = (roles.get("whitebox_attacker") or {}).get("output") or {}
     for rel in ("/submission/whitebox/poc.bin", "/submission/whitebox/patch.diff"):
         if rel not in wb_out:
             errs.append(f"whitebox_attacker.output 缺 {rel}")
-    bb_out = (roles.get("blackbox_attacker") or {}).get("output") or {}
-    if "/submission/blackbox/poc.bin" not in bb_out:
-        errs.append("blackbox_attacker.output 缺 /submission/blackbox/poc.bin")
+    if not ((roles.get("blackbox_defender_s5") or {}).get("output") or {}):
+        errs.append("blackbox_defender_s5 缺 output（告警存档）")
+    if not ((roles.get("blackbox_defender_s6") or {}).get("output") or {}):
+        errs.append("blackbox_defender_s6 缺 output（处置计划存档）")
+    for r in ("blackbox_defender_s5", "blackbox_defender_s6"):
+        role = roles.get(r) or {}
+        if role and not role.get("ndr_api"):
+            errs.append(f"roles.{r} 缺 ndr_api（蓝队只通过 NDR 工作）")
 
 
 def _check_env(case, errs):
@@ -143,9 +148,19 @@ def _check_case_json(case, errs):
         errs.append(f"replay.driver 必须是 command（唯一重放形态），实际 {replay.get('driver')!r}")
     if not replay.get("attack_cmd"):
         errs.append("replay 缺 attack_cmd（dc run 参数列表）")
+    # 黑盒线的攻击流量全部由出题人提供：S5/S6 用 reference_attack_cmd，
+    # S4 用 variant_cmd。缺任何一个，对应阶段就无法真重放。
+    if not replay.get("reference_attack_cmd"):
+        errs.append("replay 缺 reference_attack_cmd（黑盒 S5/S6 的攻击流量）")
+    if not replay.get("variant_cmd"):
+        errs.append("replay 缺 variant_cmd（S4 的多种攻击变种）")
     for stale in ("traffic_container", "gateway", "reference_cmd"):
         if stale in replay:
-            errs.append(f"replay.{stale} 已废弃：重放统一为 command，路径写在 attack_cmd 里")
+            errs.append(f"replay.{stale} 已废弃：重放统一为 command，路径写在命令列表里")
+
+    ndr = cfg.get("ndr") or {}
+    if not ndr.get("url"):
+        errs.append("ndr 缺 url（S5 的观测面必须部署 NDR）")
 
     if not (cfg.get("patch") or {}).get("build_cmd"):
         errs.append("patch 缺 build_cmd（补丁必须真编译）")

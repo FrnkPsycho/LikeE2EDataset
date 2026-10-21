@@ -14,8 +14,8 @@
 #   * **流量容器一律一次性**：`profiles: ["traffic"]`，由评测器
 #     `docker compose run --rm <service> <命令>` 拉起，跑完即销毁。不要写常驻容器
 #     （`while true; do sleep 3600; done`）—— 那是旧机制的残留，现在没有任何东西会去 exec 它。
-#   * 网络固定六张，名字固定：entry_net / gateway_net / target_net / mgmt_net /
-#     agent_net / egress_out。
+#   * 网络固定七张，名字固定：entry_net / gateway_net / target_net / mgmt_net /
+#     blue_net / agent_net / egress_out。
 #
 # 数据面（全部经同一共享出口，网关看到的真实源 IP 完全一致）：
 #
@@ -23,14 +23,18 @@
 #   normal ────┘
 #
 # 控制面：
-#   宿主机评测器 ──> gateway 管理 API (:8080)
-#   蓝队 agent   ──mgmt_net──> gateway 管理 API
+#   宿主机评测器 ──> gateway 管理 API (:8080，仅回环)
+#   蓝队 agent   ──blue_net──> NDR（检测读 /traffic，处置写 /rules）
+#   NDR          ──gateway_net──> gateway 管理 API（规则下发）
+#   NDR 同时接 mgmt_net：宿主机经回环端口读流量与告警（容器只在非 internal
+#   网络上才发布端口，所以要有一张非 internal 网）
 #
 # 网络隔离（结构性约束，不依赖配置自觉）：
-#   entry_net    红队/流量角色所在；**只有** egress，解析不到网关与目标
-#   gateway_net  仅 egress + gateway
-#   target_net   仅 gateway + target；无宿主机端口，红队不可达
-#   mgmt_net     蓝队 + 网关管理面；宿主机只回环发布
+#   entry_net    流量角色所在；**只有** egress，解析不到网关与目标
+#   gateway_net  仅 egress + gateway + ndr
+#   target_net   仅 gateway + target；无宿主机端口，外部不可达
+#   mgmt_net     gateway 管理面 + NDR；只给宿主机回环发布
+#   blue_net     蓝队 + NDR（internal）；蓝队碰不到执行点
 #
 # 参考防御（blackbox/defense/）**没有容器**，只跑在宿主机；
 # 它不得出现在本文件的任何 volumes 里。
@@ -72,12 +76,38 @@ services:
       GATEWAY_ADMIN_TOKEN: "${GATEWAY_ADMIN_TOKEN:-local-admin-token}"
       GATEWAY_S5_TOKEN: "${GATEWAY_S5_TOKEN:-local-s5-token}"
       GATEWAY_S6_TOKEN: "${GATEWAY_S6_TOKEN:-local-s6-token}"
+      GATEWAY_NDR_URL: "http://ndr:8080"
+      GATEWAY_NDR_INGEST_TOKEN: "${NDR_INGEST_TOKEN:-local-ndr-ingest}"
     ports:
       - "127.0.0.1:<端口>:8080"     # 管理面仅宿主机回环
     volumes:
       - gateway_data:/data
     depends_on:
       - target
+
+  # ── 旁路 NDR：蓝队的观测与处置平台（通用，复制即可）──
+  ndr:
+    build:
+      context: ./ndr
+    image: <项目名>/ndr:1
+    networks:
+      gateway_net:
+        ipv4_address: 172.31.0.4
+      mgmt_net:
+        ipv4_address: 172.33.0.4
+      blue_net:
+    restart: unless-stopped
+    environment:
+      NDR_INGEST_TOKEN: "${NDR_INGEST_TOKEN:-local-ndr-ingest}"
+      NDR_BLUE_TOKEN: "${NDR_BLUE_TOKEN:-local-ndr-blue}"
+      NDR_RULE_TOKEN: "${NDR_RULE_TOKEN:-local-ndr-rule}"
+      NDR_ADMIN_TOKEN: "${NDR_ADMIN_TOKEN:-local-ndr-admin}"
+      GATEWAY_MGMT_URL: "http://gateway:8080"
+      NDR_GATEWAY_TOKEN: "${GATEWAY_S6_TOKEN:-local-s6-token}"
+    ports:
+      - "127.0.0.1:<NDR端口>:8080"  # 仅宿主机回环：评测器读流量与告警
+    depends_on:
+      - gateway
 
   # ── 共享出口（通用，复制即可）──
   egress:
@@ -173,6 +203,10 @@ networks:
       config:
         - subnet: 172.33.0.0/24
           ip_range: 172.33.0.128/25
+  # 蓝队网（internal）：蓝队 agent 与 NDR 唯一相连的网
+  blue_net:
+    driver: bridge
+    internal: true
   # agent 隔离网（internal，无外网）+ squid 出口网（有外网）
   agent_net:
     driver: bridge

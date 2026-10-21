@@ -20,15 +20,32 @@
   "replay": {
     "driver": "command",
     "attack_cmd": [
-      "-v", "{poc}:/poc/poc.bin",
+      "-v",
+      "{poc}:/poc/poc.bin",
       "traffic",
-      "python", "traffic/replay_poc.py", "--poc", "/poc/poc.bin", "--gateway", "http://egress:80"
+      "python",
+      "traffic/replay_poc.py",
+      "--poc",
+      "/poc/poc.bin",
+      "--gateway",
+      "http://egress:80"
     ],
     "reference_attack_cmd": [
       "traffic",
-      "python", "traffic/reference_poc.py", "--gateway", "http://egress:80"
+      "python",
+      "traffic/reference_poc.py",
+      "--gateway",
+      "http://egress:80"
     ],
-    "evidence_key": "body_text"
+    "evidence_key": "body_text",
+    "variant_cmd": [
+      "traffic",
+      "python",
+      "traffic/mutated_pocs.py",
+      "--run-all",
+      "--gateway",
+      "http://egress:80"
+    ]
   },
   "patch": {
     "build_cmd": "bash whitebox/service/build.sh patched {patch}"
@@ -36,7 +53,9 @@
   "business": {
     "driver": "command",
     "command": [
-      "traffic", "sh", "-c",
+      "traffic",
+      "sh",
+      "-c",
       "cd /work && python -m pytest business_tests/test_business.py -q"
     ]
   },
@@ -44,5 +63,11 @@
     "driver": "gateway",
     "dir": "blackbox/defense",
     "module": "blue_controller"
+  },
+  "ndr": {
+    "url": "http://127.0.0.1:<NDR端口>",
+    "admin_token": "local-ndr-admin",
+    "blue_token": "local-ndr-blue",
+    "rule_token": "local-ndr-rule"
   }
 }

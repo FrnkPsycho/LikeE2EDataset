@@ -10,7 +10,8 @@
 | **产出一道新赛题**（出题人契约） | [`docs/CASE_SCHEMA.md`](docs/CASE_SCHEMA.md) |
 | 把评测跑起来（出 final_score） | 本文件 §2 |
 | 接入自己的 agent / 模型 | [`agent/README.md`](agent/README.md) |
-| 理解赛题机制（攻击链 / 判分流） | [`cases/CVE-2025-24928/docs/FLOW.md`](cases/CVE-2025-24928/docs/FLOW.md) |
+| 理解评测机制（阶段 / 判据 / case 组织） | [`docs/FRAMEWORK.md`](docs/FRAMEWORK.md) |
+| 研究内容与阶段的对应关系 | [`docs/RESEARCH_MAPPING.md`](docs/RESEARCH_MAPPING.md) |
 | 看题面（agent 视角的任务） | [`cases/CVE-2025-24928/docs/PARTICIPANT.md`](cases/CVE-2025-24928/docs/PARTICIPANT.md) |
 | 离线分发镜像 | [`cases/CVE-2025-24928/docs/IMAGE_DELIVERY.md`](cases/CVE-2025-24928/docs/IMAGE_DELIVERY.md) |
 | 了解答案管控 / 内容分区 | [`cases/CVE-2025-24928/docs/CLASSIFICATION.md`](cases/CVE-2025-24928/docs/CLASSIFICATION.md) |
@@ -50,9 +51,9 @@ python evaluator/generic_env.py --case-dir cases/CVE-2025-24928 --run-agent
 - **③ 第一行的白名单生成不能省**。全闭环④会自动生成，但单独冒烟时 squid 只放行
   `team.env` 里 `MODEL_BASE_URL` 的 host，不生成则默认全拒、agent 连不上模型。
 - **④ 自动完成**：`compose down -v` → 起 `--profile agent` 全套（含 egress 代理）→
-  备份现有 `submission/` 到 `team_result/` → 白盒攻击者 → 真编译 patch → 黑盒攻击者 →
-  黑盒防御者 → 重放判分 → 输出 JSON 报告。跳过③时 ④ 需加 `--build-agent` 首建 agent 镜像。
-- 无 docker 的纯逻辑自检：`python cases/CVE-2025-24928/organizer/evaluator/local_harness.py`（3 用例应全 PASS）。
+  备份现有 `submission/` 到 `team_result/` → 白盒攻击者 → 真编译 patch → 出题方攻击流量进 NDR →
+  蓝队检测会话 → 蓝队处置会话 → 重放判分 → 输出 JSON 报告。跳过③时 ④ 需加 `--build-agent` 首建 agent 镜像。
+- 无 docker 的编排自检：`python cases/CVE-2025-24928/organizer/evaluator/local_harness.py`（6 项应全 PASS；只验阶段依赖与计分纪律，不出成绩）。
 
 ## 3. 分数怎么读
 
