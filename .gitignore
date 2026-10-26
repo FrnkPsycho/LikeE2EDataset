@@ -20,7 +20,8 @@ Thumbs.db
 .vscode/
 
 # --- Claude / 本地状态 ---
-.claude/
+.claude/*
+!.claude/skills/
 
 # --- 赛题离线交付产物（镜像 tar 大文件，不入库）---
 _deliver/

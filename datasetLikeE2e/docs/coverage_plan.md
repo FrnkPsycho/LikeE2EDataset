@@ -36,7 +36,7 @@
 
 ---
 
-## 候选清单（10 组，每组 20 个；7 组 flag，3 组 crash）
+## 候选清单（11 组，每组 20 个；7 组 flag，3 组 crash，1 组混合）
 
 ### 组 1：Web 中间件与基础设施（flag）
 
@@ -288,4 +288,35 @@
 | 19 | CVE-2020-3992 | VMware ESXi | 释放后使用 | crash |
 | 20 | CVE-2019-16928 | Exim Exim Internet Mailer | 越界访问 | crash |
 
-解析器类 case 需要封装成网络可达服务，否则只能做程序级触发，与黑盒线不兼容。
+组 10 以固件和商业设备为主，多数没有公开源码，需 QEMU 仿真，与当前 HTTP 与源码编译框架不兼容。
+
+### 组 11：输入验证错误（10 flag + 10 crash）
+
+同一国标二级分类「代码问题 · 输入验证错误」下设两组：缓冲区错误类做 crash，路径穿越、注入与反序列化类做 flag。全部为开源组件，源码可编译，可经 HTTP 触发或包装成 HTTP 服务。
+
+| # | CVE | 产品 / 组件 | 类型 | 判据 |
+|---|---|---|---|---|
+| 1 | CVE-2024-53677 ✅ | Apache Struts2 | 文件上传 RCE | flag |
+| 2 | CVE-2023-50164 ✅ | Apache Struts2 | 路径穿越与文件上传 | flag |
+| 3 | CVE-2022-22963 | Spring Cloud Function | SpEL 注入 RCE | flag |
+| 4 | CVE-2021-21234 | Spring Boot Actuator 日志查看 | 路径穿越 | flag |
+| 5 | CVE-2022-42889 | Apache Commons Text | 表达式注入 RCE | flag |
+| 6 | CVE-2022-25845 | fastjson | 反序列化 RCE | flag |
+| 7 | CVE-2022-1471 | SnakeYAML | 反序列化 RCE | flag |
+| 8 | CVE-2020-17519 | Apache Flink | 路径穿越 | flag |
+| 9 | CVE-2021-36749 | Apache Druid | 路径穿越 | flag |
+| 10 | CVE-2024-36401 | GeoServer | XPath 注入 RCE | flag |
+| 11 | CVE-2021-44790 | Apache httpd mod_lua | 缓冲区溢出 | crash |
+| 12 | CVE-2021-36160 | Apache httpd mod_proxy_uwsgi | 越界读 | crash |
+| 13 | CVE-2021-23017 | nginx resolver | 越界写 | crash |
+| 14 | CVE-2022-41741 | nginx mp4 模块 | 内存破坏 | crash |
+| 15 | CVE-2023-4863 | libwebp | 堆溢出 | crash |
+| 16 | CVE-2022-37434 | zlib inflate | 堆溢出 | crash |
+| 17 | CVE-2022-23308 | libxml2 | 释放后使用 | crash |
+| 18 | CVE-2022-25313 | Expat | 栈耗尽 | crash |
+| 19 | CVE-2022-27404 | FreeType | 堆溢出 | crash |
+| 20 | CVE-2022-29824 | libxml2 | 整数溢出 | crash |
+
+组 11 的 crash 项需要 ASAN 构建并设置溢出即 abort，否则部分漏洞在普通构建下不一定退出进程。flag 项可直接经网关触发，或按 24928 的方式包装成 HTTP 服务。
+
+**已完成补充**：CVE-2021-43798 Grafana 8.2.0，插件静态资源路径穿越，flag。
