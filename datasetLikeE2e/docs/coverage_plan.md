@@ -324,3 +324,7 @@
 **已完成**：CVE-2021-21234 Spring Boot Actuator 日志查看器（`eu.hinsch:spring-boot-actuator-logview` 0.2.12）`base` 参数路径穿越，flag，标定 1.0 ✅
 
 **已完成**：CVE-2019-3799 Spring Cloud Config Server 2.1.0 资源端点路径穿越，flag，标定 1.0 ✅
+
+**已完成**：CVE-2022-22947 Spring Cloud Gateway 3.1.0 Actuator SpEL 注入，flag，标定 1.0 ✅
+
+**已完成**：CVE-2022-42889 Apache Commons Text 1.9 插值 RCE（Text4Shell），flag，标定 1.0 ✅
